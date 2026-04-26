@@ -2,7 +2,9 @@ package provider
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"time"
 
 	"github.com/openclaw/gclaw/internal/model"
 	"github.com/openclaw/gclaw/internal/model/claude"
@@ -14,22 +16,26 @@ import (
 type Config struct {
 	Type             string            // "claude", "openai", "ollama", "openai-compatible", "mock"
 	Model            string            // e.g. "claude-sonnet-4-6", "deepseek-chat", "glm-4"
-	APIKey           string            // API key
+	APIKey           string            // single API key (legacy)
+	Keys             []string          // multiple API keys for credential pool rotation
 	BaseURL          string            // Override base URL
 	Endpoint         string            // Override chat completions endpoint (default /v1/chat/completions)
 	SupportsThinking bool              // Set true for reasoning models (DeepSeek-R1, etc.)
 	Headers          map[string]string // Extra HTTP headers (for Zhipu etc.)
+	Cooldown         time.Duration     // exhaustion cooldown (default 5m)
 }
 
 // Factory creates model instances from provider configs.
 type Factory struct {
 	providers map[string]Config
+	pools     map[string]*CredentialPool
 }
 
 // NewFactory creates a model factory.
 func NewFactory() *Factory {
 	return &Factory{
 		providers: make(map[string]Config),
+		pools:     make(map[string]*CredentialPool),
 	}
 }
 
@@ -39,31 +45,35 @@ func (f *Factory) Register(name string, cfg Config) {
 }
 
 // Build creates a Model instance from a named provider config.
+// If the config has multiple Keys, uses credential pool rotation.
 func (f *Factory) Build(name string) (model.Model, error) {
+	m, _, err := f.BuildWithPool(name)
+	return m, err
+}
+
+// BuildWithPool creates a Model instance and returns the credential pool if one was used.
+func (f *Factory) BuildWithPool(name string) (model.Model, *CredentialPool, error) {
 	cfg, ok := f.providers[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown provider: %s", name)
+		return nil, nil, fmt.Errorf("unknown provider: %s", name)
 	}
 
-	apiKey := cfg.APIKey
-	if apiKey == "" {
-		apiKey = resolveAPIKey(cfg.Type)
-	}
+	apiKey, pool := f.resolveKey(name, cfg)
 
 	switch cfg.Type {
 	case "claude":
 		if apiKey == "" {
-			return nil, fmt.Errorf("claude: set ANTHROPIC_API_KEY or CLAUDE_API_KEY")
+			return nil, nil, fmt.Errorf("claude: set ANTHROPIC_API_KEY or CLAUDE_API_KEY")
 		}
 		c := claude.New(cfg.Model, apiKey)
 		if cfg.BaseURL != "" {
 			c.SetBaseURL(cfg.BaseURL)
 		}
-		return c, nil
+		return c, pool, nil
 
 	case "openai", "openai-compatible":
 		if apiKey == "" && cfg.BaseURL == "" {
-			return nil, fmt.Errorf("openai: set OPENAI_API_KEY")
+			return nil, nil, fmt.Errorf("openai: set OPENAI_API_KEY")
 		}
 		oa := openai.New(cfg.Model, apiKey, cfg.BaseURL)
 		if cfg.Endpoint != "" {
@@ -75,24 +85,54 @@ func (f *Factory) Build(name string) (model.Model, error) {
 		for k, v := range cfg.Headers {
 			oa.SetHeader(k, v)
 		}
-		return oa, nil
+		return oa, pool, nil
 
 	case "ollama":
-		return ollama.New(cfg.Model, cfg.BaseURL), nil
+		return ollama.New(cfg.Model, cfg.BaseURL), pool, nil
 
 	case "mock":
-		return model.NewMock(cfg.Model), nil
+		return model.NewMock(cfg.Model), pool, nil
 
 	default:
-		return nil, fmt.Errorf("unknown provider type: %s (valid: claude, openai, ollama, openai-compatible, mock)", cfg.Type)
+		return nil, nil, fmt.Errorf("unknown provider type: %s (valid: claude, openai, ollama, openai-compatible, mock)", cfg.Type)
 	}
+}
+
+// resolveKey returns an API key, using credential pool rotation for multi-key configs.
+func (f *Factory) resolveKey(name string, cfg Config) (string, *CredentialPool) {
+	// Multi-key pool path
+	if len(cfg.Keys) > 0 {
+		pool, ok := f.pools[name]
+		if !ok {
+			cooldown := cfg.Cooldown
+			if cooldown <= 0 {
+				cooldown = 5 * time.Minute
+			}
+			pool = NewCredentialPool(cfg.Keys, cooldown)
+			f.pools[name] = pool
+			slog.Info("credential pool created", "provider", name, "keys", len(cfg.Keys))
+		}
+		key, err := pool.Select()
+		if err != nil {
+			slog.Warn("credential pool exhausted", "provider", name, "error", err)
+			return "", pool
+		}
+		return key, pool
+	}
+
+	// Single key path (legacy)
+	apiKey := cfg.APIKey
+	if apiKey == "" {
+		apiKey = resolveAPIKey(cfg.Type)
+	}
+	return apiKey, nil
 }
 
 // BuildAll creates all registered providers.
 func (f *Factory) BuildAll() (map[string]model.Model, error) {
 	models := make(map[string]model.Model)
 	for name := range f.providers {
-		m, err := f.Build(name)
+		m, _, err := f.BuildWithPool(name)
 		if err != nil {
 			return nil, fmt.Errorf("build %s: %w", name, err)
 		}

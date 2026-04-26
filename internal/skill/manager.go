@@ -143,11 +143,42 @@ func (m *Manager) DeleteSkill(name string) error {
 		return fmt.Errorf("skill %q not found", name)
 	}
 	if s.Source != "agent" {
-		return fmt.Errorf("cannot delete user-created skill %q", name)
+		return fmt.Errorf("cannot delete %s skill %q", s.Source, name)
 	}
 	if err := os.RemoveAll(s.Dir); err != nil {
 		return err
 	}
 	delete(m.skills, name)
+	return nil
+}
+
+// LoadProject loads project-bundled skills from a project skills directory.
+// Skills are scanned from subdirectories and marked with source "project".
+// Project skills have the lowest priority (loaded first, can be overridden by user/agent).
+func (m *Manager) LoadProject(projectDir string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, err := os.Stat(projectDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillDir := filepath.Join(projectDir, entry.Name())
+		s, err := Parse(skillDir)
+		if err != nil {
+			continue
+		}
+		s.Source = "project"
+		m.skills[s.Name] = s
+	}
 	return nil
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
+	ctxmgr "github.com/openclaw/gclaw/internal/context"
 	"github.com/openclaw/gclaw/internal/model"
 	"github.com/openclaw/gclaw/internal/tool"
 	"github.com/openclaw/gclaw/internal/perm"
@@ -28,6 +30,7 @@ type Config struct {
 	MaxTurns     int
 	Autonomy     AutonomyLevel
 	Permissions  *perm.Checker
+	ContextMgr   *ctxmgr.Manager // optional; nil means no auto-compaction
 }
 
 // Agent is the core agent loop.
@@ -40,19 +43,38 @@ type Agent struct {
 	// Concurrency control for autonomous mode
 	busy bool
 	mu   sync.Mutex
+
+	// Interrupt system: allows injecting messages into a running agent loop
+	interruptCh chan string
+
+	// Context management for auto-compaction
+	ctxMgr *ctxmgr.Manager
 }
 
 // New creates a new agent instance.
 func New(cfg Config) *Agent {
 	return &Agent{
-		cfg:      cfg,
-		messages: nil,
+		cfg:         cfg,
+		messages:    nil,
+		interruptCh: make(chan string, 8),
+		ctxMgr:      cfg.ContextMgr,
 	}
 }
 
 // Reset clears the conversation history for a fresh start.
 func (a *Agent) Reset() {
 	a.messages = nil
+	if a.ctxMgr != nil {
+		a.ctxMgr.Reset()
+	}
+	// Drain pending interrupts
+	for {
+		select {
+		case <-a.interruptCh:
+		default:
+			return
+		}
+	}
 }
 
 // Messages returns a copy of the current message history.
@@ -82,6 +104,21 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 
 		a.turnCount++
 		slog.Debug("agent turn", "turn", a.turnCount, "messages", len(a.messages))
+
+		// Check for injected interrupts
+		if msg := a.drainInterrupts(); msg != "" {
+			a.messages = append(a.messages, model.Message{Role: "user", Content: msg})
+			a.syncToManager()
+			slog.Info("interrupt injected", "message_len", len(msg))
+		}
+
+		// Auto-compact if context threshold reached
+		if a.ctxMgr != nil && a.ctxMgr.ShouldCompact() {
+			slog.Info("context threshold reached, compressing", "ratio", a.ctxMgr.UsageRatio())
+			a.syncToManager()
+			a.ctxMgr.Compact(10)
+			a.messages = a.ctxMgr.GetMessages()
+		}
 
 		response, err := a.cfg.Model.Call(ctx, model.CallParams{
 			SystemPrompt: a.cfg.SystemPrompt,
@@ -143,6 +180,21 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 		}
 
 		a.turnCount++
+
+		// Check for injected interrupts
+		if msg := a.drainInterrupts(); msg != "" {
+			a.messages = append(a.messages, model.Message{Role: "user", Content: msg})
+			a.syncToManager()
+			slog.Info("interrupt injected", "message_len", len(msg))
+		}
+
+		// Auto-compact if context threshold reached
+		if a.ctxMgr != nil && a.ctxMgr.ShouldCompact() {
+			slog.Info("context threshold reached, compressing", "ratio", a.ctxMgr.UsageRatio())
+			a.syncToManager()
+			a.ctxMgr.Compact(10)
+			a.messages = a.ctxMgr.GetMessages()
+		}
 
 		events, err := a.cfg.Model.Stream(ctx, model.StreamParams{
 			SystemPrompt: a.cfg.SystemPrompt,
@@ -269,6 +321,39 @@ func (a *Agent) IsBusy() bool {
 	return a.busy
 }
 
+// Interrupt injects a message into the running agent loop.
+// Non-blocking. Safe to call from any goroutine.
+func (a *Agent) Interrupt(message string) {
+	select {
+	case a.interruptCh <- message:
+		slog.Debug("interrupt queued", "message_len", len(message))
+	default:
+		slog.Warn("interrupt channel full, dropping message", "message", truncate(message, 100))
+	}
+}
+
+// InterruptAndStop injects a message and cancels the agent loop via context.
+func (a *Agent) InterruptAndStop(message string, cancel context.CancelFunc) {
+	a.Interrupt(message)
+	cancel()
+}
+
+// drainInterrupts reads all pending interrupts and merges them into one message.
+func (a *Agent) drainInterrupts() string {
+	var parts []string
+	for {
+		select {
+		case msg := <-a.interruptCh:
+			parts = append(parts, msg)
+		default:
+			if len(parts) > 0 {
+				return "[User Interrupt] " + strings.Join(parts, "\n[User Interrupt] ")
+			}
+			return ""
+		}
+	}
+}
+
 func toolNames(tools []model.ToolUse) []string {
 	names := make([]string, len(tools))
 	for i, t := range tools {
@@ -282,4 +367,15 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// syncToManager pushes all current messages to the context manager.
+func (a *Agent) syncToManager() {
+	if a.ctxMgr == nil {
+		return
+	}
+	a.ctxMgr.Reset()
+	for _, msg := range a.messages {
+		a.ctxMgr.AddMessage(msg)
+	}
 }

@@ -39,12 +39,17 @@ Each runs independently — WeChat and cron never block the REPL, and vice versa
 
 ### Agent Loop (`internal/agent/agent.go`)
 
-Core execution loop: receive message → call LLM → if tool calls, execute them → feed results back → repeat until the model returns text-only or `MaxTurns` is exhausted.
+Core execution loop: receive message → check interrupts → auto-compact if needed → call LLM → if tool calls, execute them → feed results back → repeat until the model returns text-only or `MaxTurns` is exhausted.
 
 Key methods:
 - `Run(ctx, prompt)` — blocking, returns final text
+- `RunStreaming(ctx, prompt, onText)` — streaming variant
 - `Submit(ctx, message)` — concurrent-safe (mutex-protected busy flag), used by autonomous scheduler and cron
-- `Reset()` — clears message history; called before every cron job execution to avoid context accumulation
+- `Interrupt(message)` — injects a message into a running agent loop between turns (non-blocking, buffered channel)
+- `InterruptAndStop(message, cancel)` — inject + cancel context
+- `Reset()` — clears message history, drains interrupt channel, resets context manager
+
+**Interrupt System**: Each agent has a buffered channel (`interruptCh`, cap 8). Between every turn, `drainInterrupts()` merges pending interrupts into a single `[User Interrupt]` user message. The autonomous scheduler uses this to inject high-priority events (EventUser, EventWebhook) when the agent is busy, instead of skipping them.
 
 ### Model Layer (`internal/model/`)
 
@@ -62,6 +67,15 @@ Key methods:
 `DefaultFactory()` auto-detects providers from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZHIPU_API_KEY`, etc.). Config-file providers are then merged on top, allowing overrides. Each model name in `provider.models[]` is registered as a separate entry in the factory.
 
 Model resolution order: configured `model.default` → `model.fallback[]` list → first remaining available provider.
+
+### Credential Pool (`internal/provider/pool.go`)
+
+`CredentialPool` manages round-robin rotation across multiple API keys for a single provider. When `ProviderConfig.Keys` has multiple entries, the factory creates a pool instead of using a single key.
+
+- `Select()` — returns next healthy key via round-robin, skips exhausted keys in cooldown
+- `MarkExhausted(key, err)` — marks a key as failed (e.g. 429 rate limit), sets cooldown timer (default 5m)
+- `Recover()` — resets keys whose cooldown has expired
+- `BuildWithPool(name)` — factory method that returns both the model and the pool for later exhaustion marking
 
 ### Tools (`internal/tool/`)
 
@@ -95,4 +109,26 @@ Priority (high to low): environment variables → `.gclaw/config.yaml` (found by
 
 ### Context Management (`internal/context/manager.go`)
 
-Token estimation via char-count / 4. Auto-compaction at `compact_at` threshold: keeps first message (anchor) + recent N messages, replaces middle with boundary markers.
+Token estimation via char-count / 4. Auto-compaction at `compact_at` threshold.
+
+**Two compaction strategies:**
+1. **LLM Compression** (`compactor.go`) — when `context.compressor_enabled: true` and `context.compressor_model` is set, uses a secondary model to generate structured summaries with 8 sections (Active Task, Completed Actions, Active State, In Progress, Blocked, Key Decisions, Pending Items, Critical Context). Previous summaries are passed for iterative refinement. Anti-thrashing: skips if last 2 compressions saved < 10%.
+2. **Truncation** (legacy) — keeps first message (anchor) + recent N messages, replaces middle with boundary markers. Used when no compressor is configured or when LLM compression fails.
+
+The agent auto-compact checks before each model call. Messages are synced to the context manager via `syncToManager()`, compacted if `ShouldCompact()` returns true, then read back.
+
+### Skill System (`internal/skill/`)
+
+Skills are reusable procedural knowledge units stored as YAML frontmatter + Markdown (`SKILL.md`) files. Three sources with priority (low→high):
+
+| Source | Location | Editable |
+|--------|----------|----------|
+| `project` | `.gclaw/skills/` (alongside config.yaml) | Shipped with repo, not by agent |
+| `user` | `~/.gclaw/skills/user/` | By user |
+| `agent` | `<skills.dir>/agent/` | By agent via `skill_create` tool |
+
+`Manager.LoadAll(baseDir)` scans `baseDir/user` and `baseDir/agent`. `Manager.LoadProject(dir)` scans a flat directory of skill subdirectories and marks them source `project`. Project skills load first (lowest priority), so user/agent skills can override them by name.
+
+`Parse(dir)` reads `SKILL.md`, splits frontmatter via `---` delimiters, infers source from path (looks for `user`/`agent` segment). Skills are injected into system prompt via `ForSystemPrompt()` which formats all loaded skill bodies under `## Active Skills`.
+
+`DeleteSkill` only allows deleting `agent`-source skills. Tools: `skill_create`, `skill_delete`, `skill_list` (in `internal/tool/builtin/skill_tools/`).

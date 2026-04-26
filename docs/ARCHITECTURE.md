@@ -31,7 +31,7 @@ gclaw/
 │   │   ├── router.go    # 多模型路由与回退
 │   │   └── mock.go      # 测试用 Mock 提供者
 │   ├── perm/            # 权限检查器
-│   ├── provider/        # 模型工厂 (注册与构建)
+│   ├── provider/        # 模型工厂 (注册与构建) + 凭证池
 │   ├── session/         # SQLite + FTS5 会话持久化
 │   ├── skill/           # Skill 文件系统 (YAML frontmatter)
 │   ├── task/            # 后台任务管理
@@ -52,7 +52,8 @@ gclaw/
 │   └── mcp-gateway/     # MCP 协议网关插件
 ├── docs/                # 文档
 └── .gclaw/
-    └── config.yaml      # 项目级配置
+    ├── config.yaml      # 项目级配置
+    └── skills/          # 项目内置 skills（示例）
 ```
 
 ## 核心架构
@@ -119,7 +120,27 @@ Agent 是核心执行引擎，循环执行以下步骤：
 - `Run(ctx, prompt)` — 非流式执行
 - `RunStreaming(ctx, prompt, onText)` — 流式执行（逐 token 回调）
 - `Submit(ctx, message)` — 并发安全的提交（用于自主模式）
-- `Reset()` — 清空消息历史，系统提示词保留
+- `Interrupt(message)` — 向运行中的 Agent 注入中断消息（非阻塞）
+- `InterruptAndStop(message, cancel)` — 注入中断并取消 context
+- `Reset()` — 清空消息历史，排空中断缓冲，重置上下文管理器
+
+#### 中断系统
+
+Agent 内部维护一个 `chan string`（容量 8）作为中断缓冲。每轮 turn 开头检查：
+
+1. `drainInterrupts()` — 非阻塞排空 channel，合并为一条 `[User Interrupt]` 消息
+2. 合并消息追加到消息历史，Agent 在下一轮 LLM 调用时可见
+3. 如果缓冲区满，`Interrupt()` 非阻塞丢弃溢出（不死锁）
+
+自主调度器 (`autonomous/scheduler.go`) 的 `handleEvent()` 中：当 Agent 忙时，`EventUser` 和 `EventWebhook` 事件通过 `Interrupt()` 注入，而非直接跳过。
+
+#### 上下文自动压缩
+
+如果 Agent 配置了 `ContextMgr`（`context.Manager`），每轮 turn 还会：
+1. `syncToManager()` — 同步消息到上下文管理器
+2. 检查 `ShouldCompact()` — 当 token 使用率达到 `compact_at` 阈值
+3. 触发 `Compact()` — LLM 智能压缩（优先）或截断（降级）
+4. 压缩后从管理器读回消息，替换 Agent 本地历史
 
 ### 2. 模型层 (`internal/model/`)
 
@@ -155,6 +176,28 @@ type Model interface {
 - 按默认模型 → 回退列表 → 随机可用模型的顺序尝试
 - 基于令牌桶的每模型速率限制
 - 调用成本追踪（按 $3/$15 每百万 token 估算）
+
+#### 模型工厂 (`internal/provider/factory.go`)
+
+`DefaultFactory()` 自动检测环境变量（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`ZHIPU_API_KEY` 等）注册提供商。配置文件中的 provider 合并覆盖，每个模型名在 `models[]` 中独立注册。
+
+`BuildWithPool(name)` 返回 `(Model, *CredentialPool, error)`，调用方可持有 pool 引用在 429 错误时调用 `MarkExhausted()`。单 Key 配置不创建池。
+
+#### 凭证池 (`internal/provider/pool.go`)
+
+多 API Key 轮转，解决单 Key 限速导致 Agent 瘫痪：
+
+```go
+type CredentialPool struct {
+    creds    []PooledCredential  // 所有凭证
+    index    int                 // round-robin 游标
+    cooldown time.Duration       // 冷却时间（默认 5 分钟）
+}
+```
+
+- `Select()` — round-robin 选健康 Key，跳过冷却中的 Key
+- `MarkExhausted(key, err)` — 标记 exhausted，设冷却截止时间
+- 冷却到期自动恢复为可用
 
 ### 3. 工具系统 (`internal/tool/`)
 
@@ -218,17 +261,23 @@ tool.GlobalRegistry.Toolsets()         // 列出所有工具集
 
 ### 4. Skill 系统 (`internal/skill/`)
 
-Skill 是可复用的程序性知识单元，以 YAML frontmatter + Markdown 格式存储：
+Skill 是可复用的程序性知识单元，以 YAML frontmatter + Markdown 格式存储。三种来源，优先级从低到高：
 
 ```
-~/.gclaw/skills/
-├── user/                  # 用户手写（优先）
-│   └── github-trending/
+~/.gclaw/skills/           # 用户 skills 目录
+├── user/                  # 用户手写
+│   └── my-skill/
 │       └── SKILL.md
 └── agent/                 # Agent 自创建
     └── some-skill/
         └── SKILL.md
+
+.gclaw/skills/             # 项目内置 skills（随代码分发，优先级最低）
+└── github-trending/
+    └── SKILL.md
 ```
+
+加载顺序：project → user → agent（后加载覆盖同名的先加载），即 agent > user > project。
 
 #### SKILL.md 格式
 
@@ -366,7 +415,31 @@ type Dispatcher struct {
 
 - Token 估算：基于字符数 / 4 的粗略估算
 - 压缩触发：当 token 使用率达到 `compact_at` 阈值时触发
-- 压缩策略：保留第一条消息（上下文锚点）和最近 N 条消息，中间替换为标记
+- **双模式压缩**：
+  - **LLM 智能压缩**（优先）— 用辅助模型生成结构化摘要，替代中间消息
+  - **截断降级** — 无压缩模型或压缩失败时，保留首尾，中间替换为边界标记
+
+#### LLM 智能压缩 (`internal/context/compactor.go`)
+
+`Compactor` 接口定义压缩协议：
+
+```go
+type Compactor interface {
+    Compact(messages []model.Message, previousSummary string) (*CompressionResult, error)
+}
+```
+
+`LLMCompactor` 实现：
+1. 分割消息：保护前 N 条（keepFirst=1）+ 中间（待压缩）+ 保护后 N 条（keepRecent=10）
+2. 构建摘要 prompt（含前次摘要，支持迭代精炼）
+3. 调用压缩模型（通常是便宜的 flash 模型）
+4. 摘要替换中间消息，输出 8 个结构化段落：
+   - Active Task / Completed Actions / Active State / In Progress
+   - Blocked / Key Decisions / Pending Items / Critical Context
+
+反震荡保护：最近 2 次压缩节省 token < 10% 则跳过本次压缩。
+
+降级路径：压缩模型调用失败时自动回退到截断模式。
 
 ### 12. 任务管理 (`internal/task/`)
 
@@ -480,3 +553,6 @@ Cron Agent 可配置独立模型（`cron.model`），不占用主对话的消息
 9. **双模式 Agent** — 同一 Agent 实例支持 interactive 和 autonomous 两种模式，通过 `Submit()` 的并发锁保护
 10. **纯 Go SQLite** — 使用 `modernc.org/sqlite`，无 CGO 依赖，Windows 交叉编译零配置
 11. **Shell 自适应** — Bash 工具自动检测可用 Shell（powershell > sh > bash > cmd），并转换 UTF-16 输出
+12. **多凭证轮转** — 同一 provider 多 API Key，round-robin + 429 自动冷却切换，单 Key 不创建池
+13. **中断注入** — 缓冲 channel 容量 8，非阻塞发送，drain-merge 合并多条中断为一则消息
+14. **LLM 智能压缩** — 辅助模型生成 8 段结构化摘要替代中间消息，失败自动降级截断，反震荡防浪费

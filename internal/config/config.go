@@ -73,6 +73,7 @@ type ProviderConfig struct {
 	Thinking bool     `yaml:"thinking"`
 	Model    string   `yaml:"model"`  // single model (backwards compat)
 	Models   []string `yaml:"models"` // multiple models (preferred)
+	Cooldown string   `yaml:"cooldown"` // exhaustion cooldown (e.g. "5m")
 }
 
 // AgentConfig holds agent behavior configuration.
@@ -85,9 +86,11 @@ type AgentConfig struct {
 
 // ContextConfig holds context window management.
 type ContextConfig struct {
-	MaxTokens    int     `yaml:"max_tokens"`
-	CompactAt    float64 `yaml:"compact_at"`
-	ReserveRatio float64  `yaml:"reserve_ratio"`
+	MaxTokens         int     `yaml:"max_tokens"`
+	CompactAt         float64 `yaml:"compact_at"`
+	ReserveRatio      float64 `yaml:"reserve_ratio"`
+	CompressorModel   string  `yaml:"compressor_model"`    // e.g. "deepseek-chat"
+	CompressorEnabled bool    `yaml:"compressor_enabled"`  // enable LLM-powered compression
 }
 
 // PermissionConfig holds permission rules.
@@ -131,8 +134,9 @@ type ToolsConfig struct {
 
 // SkillsConfig holds skill system configuration.
 type SkillsConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Dir     string `yaml:"dir"`
+	Enabled    bool   `yaml:"enabled"`
+	Dir        string `yaml:"dir"`
+	ProjectDir string `yaml:"project_dir"` // project-bundled skills (e.g. skills/)
 }
 
 // DelegateConfig holds sub-agent delegation configuration.
@@ -316,6 +320,12 @@ func merge(dst *Config, src Config) {
 	if src.Context.CompactAt != 0 {
 		dst.Context.CompactAt = src.Context.CompactAt
 	}
+	if src.Context.CompressorModel != "" {
+		dst.Context.CompressorModel = src.Context.CompressorModel
+	}
+	if src.Context.CompressorEnabled {
+		dst.Context.CompressorEnabled = true
+	}
 	if src.Permission.Mode != "" {
 		dst.Permission.Mode = src.Permission.Mode
 	}
@@ -359,6 +369,9 @@ func merge(dst *Config, src Config) {
 	}
 	if src.Skills.Dir != "" {
 		dst.Skills.Dir = src.Skills.Dir
+	}
+	if src.Skills.ProjectDir != "" {
+		dst.Skills.ProjectDir = src.Skills.ProjectDir
 	}
 	// Memory merge
 	if src.Memory.Enabled {

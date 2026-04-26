@@ -76,6 +76,7 @@ model:
         - deepseek-v4-pro         # 每个模型名作为独立 provider 注册
         - deepseek-v4-flash
       base_url: https://api.deepseek.com
+      cooldown: 5m                # Key 限速冷却时间（默认 5 分钟）
 
     zhipu:
       keys:
@@ -103,6 +104,8 @@ context:
   max_tokens: 128000              # 上下文窗口大小
   compact_at: 0.85                # 触发压缩的 token 使用率
   reserve_ratio: 0.15             # 为响应保留的 token 比例
+  compressor_enabled: true        # 启用 LLM 智能压缩
+  compressor_model: deepseek-v4-flash # 压缩用轻量模型
 
 permission:
   mode: default                   # 权限模式：default | auto | strict | plan
@@ -227,6 +230,7 @@ gclaw dev — interactive mode | deepseek-v4-pro | type /help
 | `/cron` | 查看定时任务状态 |
 | `/tasks` | 列出后台任务 |
 | `/compact` | 手动压缩上下文 |
+| `/interrupt <msg>` | 向运行中的 Agent 注入中断消息 |
 | `/clear` | 清空对话历史 |
 | `/exit` | 退出 |
 
@@ -290,11 +294,25 @@ Bash 安全命令白名单：`git status`, `git diff`, `git log`, `ls`, `cat`, `
 
 Skill 是可复用的程序性知识单元，以 SKILL.md 文件存储。
 
+### 三种来源
+
+| 来源 | 位置 | 优先级 | 说明 |
+|------|------|:---:|------|
+| `project` | `.gclaw/skills/`（项目目录） | 最低 | 随项目分发，不可被 Agent 删除 |
+| `user` | `~/.gclaw/skills/user/` | 中 | 用户手写，不可被 Agent 删除 |
+| `agent` | `<skills.dir>/agent/` | 最高 | Agent 通过 `skill_create` 工具创建 |
+
+加载顺序：project → user → agent，后加载覆盖同名 skill。
+
 ### 目录结构
 
 ```
-~/.gclaw/skills/
-├── user/                  # 用户手写（优先）
+.gclaw/skills/             # 项目内置 skills（随代码分发）
+└── github-trending/
+    └── SKILL.md
+
+~/.gclaw/skills/           # 用户 skills 目录
+├── user/                  # 用户手写
 │   └── my-skill/
 │       └── SKILL.md
 └── agent/                 # Agent 自创建
@@ -324,7 +342,11 @@ Skill 在启动时自动加载并注入 Agent 的 system prompt。用户只需�
 ```yaml
 skills:
   enabled: true
+  dir: ~/.gclaw/skills          # 用户 skills 目录（默认）
+  project_dir: .gclaw/skills    # 项目 skills 目录（可选，默认自动检测）
 ```
+
+项目 skills 随代码分发，放在 `.gclaw/skills/` 下，与 `config.yaml` 同级。如需覆盖项目 skill，在 `~/.gclaw/skills/user/` 下创建同名 skill 即可。
 
 ## 记忆系统
 
@@ -573,13 +595,81 @@ providers:
 
 ## 上下文管理
 
-长对话中，令牌使用达到 `compact_at` 阈值（默认 85%）时自动触发压缩：
+长对话中，令牌使用达到 `compact_at` 阈值（默认 85%）时自动触发压缩。支持两种模式：
 
-1. 保留第一条消息（系统上下文锚点）
-2. 保留最近的对话轮次
-3. 中间消息替换为边界标记
+### LLM 智能压缩（推荐）
+
+配置 `compressor_enabled: true` 和 `compressor_model` 后启用，替代粗暴截断：
+
+1. **分割消息** — 保护首条（上下文锚点）+ 最近 10 条消息，中间部分送去压缩
+2. **生成摘要** — 辅助模型（如 `deepseek-v4-flash`）生成 8 段结构化摘要：
+   - Active Task（当前任务）/ Completed Actions（已完成操作）/ Active State（当前状态）
+   - In Progress（进行中）/ Blocked（阻塞项）/ Key Decisions（关键决策）
+   - Pending Items（待办项）/ Critical Context（关键上下文）
+3. **迭代精炼** — 前次摘要传入下次压缩，累积精炼
+4. **降级保护** — 压缩模型调用失败时自动回退到截断模式
+5. **反震荡** — 最近 2 次压缩节省 token < 10% 则跳过，避免频繁无效压缩
+
+配置：
+```yaml
+context:
+  max_tokens: 128000
+  compact_at: 0.85
+  compressor_enabled: true
+  compressor_model: deepseek-v4-flash   # 推荐用便宜的 flash 模型
+```
+
+### 截断模式（降级）
+
+无压缩模型或压缩失败时自动使用：保留首条消息 + 最近 N 条，中间替换为边界标记。
 
 手动压缩：对话中输入 `/compact`
+
+## 中断系统
+
+自治模式（semi/full）下，Agent 可能在长时间执行任务。`/interrupt` 命令可向运行中的 Agent 注入新消息，改变执行方向：
+
+```
+> /interrupt 停下手头工作，先修复 login.go 的 bug
+Interrupt sent: "停下手头工作，先修复 login.go 的 bug"
+```
+
+**工作原理**：
+- Agent 内部维护缓冲 channel（容量 8），非阻塞接收中断消息
+- 每轮 turn 开头排空 channel，合并多条中断为一条 `[User Interrupt]` 消息
+- Agent 在下一轮 LLM 调用中看到中断，可据此调整方向
+- 多条中断自动合并，避免消息碎片化
+- 缓冲区满时丢弃溢出（不死锁）
+
+**适用场景**：
+- Agent 执行方向偏离预期，需要即时纠正
+- 有更高优先级的任务需要插入
+- 外部事件（webhook）触发需要 Agent 立即关注
+
+## 多凭证轮转
+
+同一 provider 可配置多个 API Key，实现 round-robin 轮转和限速自动切换：
+
+```yaml
+providers:
+  deepseek:
+    keys:
+      - sk-primary-key
+      - sk-backup-key
+      - sk-third-key
+    models:
+      - deepseek-v4-pro
+    cooldown: 5m    # Key 被限速后的冷却时间（默认 5 分钟）
+```
+
+**工作流程**：
+1. `Select()` 按 round-robin 顺序选择健康的 Key
+2. 遇到 429 限速错误时，调用方标记该 Key 为 `exhausted`，进入冷却
+3. 冷却期间自动跳过，使用其他 Key
+4. 冷却到期后自动恢复为可用
+5. 所有 Key 都不可用时返回错误
+
+单 Key 配置不创建池，无额外开销。
 
 ## 子代理委派
 

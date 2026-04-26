@@ -36,12 +36,19 @@ gclaw dev — interactive mode | deepseek-v4-pro | type /help
 ## 特性
 
 - **多模型支持** — DeepSeek、GLM（智谱）、Claude、OpenAI、Ollama，自动回退
+- **多凭证池** — 同一 provider 配多个 API Key，round-robin 轮转，429 限速自动切换，冷却后恢复
 - **三级自主模式** — interactive（交互）/ semi（半自主）/ full（全自主心跳驱动）
+- **中断系统** — 自治模式下可向运行中的 agent 注入消息，改变执行方向
 - **微信通道** — 扫码登录，双向消息，cron 结果推送
 - **定时任务** — 内置 cron 调度，支持独立模型，微信通知
-- **内置工具** — ReadFile、WriteFile、Bash、Glob、Grep、SleepTool
+- **内置工具** — ReadFile、WriteFile、Bash、Glob、Grep、SleepTool，支持自注册扩展
 - **权限系统** — 洋葱模型，glob 规则匹配，四种执行模式
-- **上下文管理** — Token 估算，自动压缩，可配置阈值
+- **LLM 智能压缩** — 用辅助模型生成结构化摘要，替代粗暴截断，保留任务上下文
+- **Skill 系统** — 可复用程序性知识单元，YAML frontmatter + Markdown，支持 Agent 自创建
+- **记忆系统** — 跨对话记忆，自动 prefetch/sync，支持多 provider fan-out
+- **会话持久化** — SQLite + FTS5 全文搜索，对话历史永久保存
+- **子代理委派** — 主 Agent 可委派子代理并行执行，信号量控制并发
+- **统一路由** — Gateway 抽象平台差异，REPL/微信统一接入
 - **任务管理** — 异步后台任务，并发控制，DAG 依赖
 
 ## 模型提供者
@@ -68,9 +75,10 @@ model:
   fallback: [deepseek-v4-pro, glm-4.7, llama3.2:1b]
   providers:
     deepseek:
-      keys: [sk-xxx]
+      keys: [sk-xxx, sk-yyy, sk-zzz]  # 多 Key 轮转，429 限速自动切换
       models: [deepseek-v4-pro, deepseek-v4-flash]
       base_url: https://api.deepseek.com
+      cooldown: 5m                    # Key 限速冷却时间
     ollama:
       base_url: http://localhost:11434
       models: [llama3.2:1b]
@@ -85,6 +93,8 @@ context:
   max_tokens: 128000
   compact_at: 0.85
   reserve_ratio: 0.15
+  compressor_enabled: true           # 启用 LLM 智能压缩
+  compressor_model: deepseek-v4-flash # 压缩用的轻量模型
 
 permission:
   mode: default           # default | auto | strict | plan
@@ -125,6 +135,7 @@ logging:
 | `/tasks` | 后台任务列表 |
 | `/config` | 当前配置 |
 | `/compact` | 手动压缩上下文 |
+| `/interrupt <msg>` | 向运行中的 Agent 注入中断消息 |
 | `/clear` | 清空对话 |
 | `/exit` | 退出 |
 
@@ -147,22 +158,29 @@ logging:
 gclaw/
 ├── cmd/gclaw/           # 主入口 (REPL + 微信 + Cron)
 ├── internal/
-│   ├── agent/           # Agent 核心循环
+│   ├── agent/           # Agent 核心循环（中断/压缩）
 │   ├── autonomous/      # 自主模式调度器
 │   ├── channel/         # 消息通道接口
 │   │   └── weixin/      # 微信通道实现
 │   ├── config/          # 配置加载与验证
-│   ├── context/         # 上下文窗口管理
+│   ├── context/         # 上下文窗口管理 + LLM 压缩器
 │   ├── cron/            # 定时任务调度器
+│   ├── delegate/        # 子代理委派
+│   ├── gateway/         # 统一路由层
+│   │   └── adapter/     # REPL/微信适配器
+│   ├── memory/          # 记忆系统
 │   ├── model/           # LLM 接口与实现
-│   │   ├── claude/
-│   │   ├── openai/
-│   │   └── ollama/
+│   │   ├── claude/      # Anthropic Claude
+│   │   ├── openai/      # OpenAI & 兼容 API
+│   │   └── ollama/      # 本地 Ollama
 │   ├── perm/            # 权限检查
-│   ├── provider/        # 模型工厂
+│   ├── provider/        # 模型工厂 + 凭证池
+│   ├── session/         # SQLite + FTS5 会话持久化
+│   ├── skill/           # Skill 文件系统
 │   ├── task/            # 后台任务管理
-│   └── tool/builtin/    # 内置工具
+│   └── tool/builtin/    # 内置工具（自注册）
 ├── docs/                # 文档
+├── .gclaw/              # 项目配置 + 内置 skills
 └── plugins/             # 插件系统
 ```
 

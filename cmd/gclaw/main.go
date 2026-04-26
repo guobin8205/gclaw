@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -133,7 +134,7 @@ func runREPL() {
 	providerFactory := setupProviders(cfg)
 	modelProvider := resolveModel(providerFactory, cfg)
 	permChecker := setupPermissions(cfg)
-	ctxManager := setupContext(cfg)
+	ctxManager := setupContext(cfg, providerFactory)
 	taskMgr := task.NewManager(10)
 
 	// Initialize skill system
@@ -144,6 +145,18 @@ func runREPL() {
 		if skillDir == "" {
 			skillDir = config.ExpandPath("~/.gclaw/skills")
 		}
+
+		// Load project-bundled skills first (lowest priority)
+		projectSkillsDir := cfg.Skills.ProjectDir
+		if projectSkillsDir == "" && projectPath != "" {
+			projectSkillsDir = filepath.Join(filepath.Dir(projectPath), "skills")
+		}
+		if projectSkillsDir != "" {
+			if err := skillMgr.LoadProject(projectSkillsDir); err != nil {
+				slog.Warn("skill: failed to load project skills", "dir", projectSkillsDir, "error", err)
+			}
+		}
+
 		if err := skillMgr.LoadAll(skillDir); err != nil {
 			slog.Warn("skill: failed to load skills", "error", err)
 		} else {
@@ -204,6 +217,7 @@ func runREPL() {
 		MaxTurns:     100,
 		Autonomy:     autonomyLevel,
 		Permissions:  permChecker,
+		ContextMgr:   ctxManager,
 	})
 
 	fmt.Printf("gclaw %s — %s mode | %s | type /help\n\n", Version, cfg.Agent.Autonomy, cfg.Model.Default)
@@ -460,6 +474,7 @@ Commands:
   /tasks       List running tasks
   /config      Show current config
   /compact     Force context compaction
+  /interrupt   Inject a message into the running agent (autonomous mode)
   /clear       Clear conversation
   /exit        Exit gclaw`)
 	case cmd == "/stats":
@@ -507,6 +522,18 @@ Commands:
 	case cmd == "/compact":
 		ctxMgr.Compact(10)
 		fmt.Println("Context compacted.")
+	case strings.HasPrefix(cmd, "/interrupt"):
+		if !ag.IsBusy() {
+			fmt.Println("Agent is not currently running.")
+			break
+		}
+		msg := strings.TrimSpace(strings.TrimPrefix(cmd, "/interrupt"))
+		if msg == "" {
+			fmt.Println("Usage: /interrupt <message>")
+			break
+		}
+		ag.Interrupt(msg)
+		fmt.Printf("Interrupt sent: %q\n", msg)
 	case cmd == "/config":
 		fmt.Println("\n--- Config ---")
 		fmt.Printf("Model: %s\n", cfg.Model.Default)
@@ -516,6 +543,7 @@ Commands:
 		fmt.Printf("Permission: %s\n", cfg.Permission.Mode)
 	case cmd == "/clear":
 		ctxMgr.Reset()
+		ag.Reset()
 		fmt.Println("Conversation cleared.")
 	case cmd == "/exit":
 		if scheduler != nil {
@@ -592,6 +620,7 @@ func setupProviders(cfg *config.Config) *provider.Factory {
 				Type:             resolveProviderType(name),
 				Model:            modelName,
 				APIKey:           apiKey,
+				Keys:             keys,
 				BaseURL:          p.BaseURL,
 				Endpoint:         p.Endpoint,
 				SupportsThinking: p.Thinking,
@@ -685,13 +714,26 @@ func setupPermissions(cfg *config.Config) *perm.Checker {
 	return perm.NewChecker(perm.Mode(cfg.Permission.Mode), rules)
 }
 
-func setupContext(cfg *config.Config) *context.Manager {
-	return context.NewManager(context.Config{
+func setupContext(cfg *config.Config, factory *provider.Factory) *context.Manager {
+	ctxCfg := context.Config{
 		MaxTokens:    cfg.Context.MaxTokens,
 		CompactAt:    cfg.Context.CompactAt,
 		ReserveRatio: cfg.Context.ReserveRatio,
 		SystemPrompt: defaultSystemPrompt() + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy)),
-	})
+	}
+
+	if cfg.Context.CompressorEnabled && cfg.Context.CompressorModel != "" {
+		compModel, err := factory.Build(cfg.Context.CompressorModel)
+		if err != nil {
+			slog.Warn("compressor model not available, falling back to truncation", "model", cfg.Context.CompressorModel, "error", err)
+			return context.NewManager(ctxCfg)
+		}
+		slog.Info("context: LLM compressor enabled", "model", cfg.Context.CompressorModel)
+		compactor := context.NewLLMCompactor(compModel, 1, 10, 2048)
+		return context.NewManagerWithCompactor(ctxCfg, compactor)
+	}
+
+	return context.NewManager(ctxCfg)
 }
 
 func setupLogging(level string) {

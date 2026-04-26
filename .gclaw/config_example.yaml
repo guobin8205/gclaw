@@ -1,0 +1,228 @@
+# =============================================================================
+# GClaw 配置示例
+# =============================================================================
+# 将此文件复制为 config.yaml 并填入实际值即可使用。
+# 配置优先级：环境变量 > .gclaw/config.yaml > ~/.gclaw/config.yaml > 默认值
+# =============================================================================
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# 模型配置
+# ---------------------------------------------------------------------------
+model:
+  # 默认模型名（对应 providers 下某个 models[] 条目）
+  default: deepseek-v4-pro
+
+  # 回退链：默认模型不可用时依次尝试
+  fallback:
+    - deepseek-v4-pro
+    - glm-4.7
+    - llama3.2:1b
+
+  providers:
+    # DeepSeek — 通过 OpenAI 兼容 API 接入
+    deepseek:
+      keys:
+        - sk-your-deepseek-api-key       # 支持多个 key 轮询
+        - sk-another-key                 # 429 限速时自动切换
+      models:
+        - deepseek-v4-pro
+        - deepseek-v4-flash
+      base_url: https://api.deepseek.com
+      cooldown: 5m                       # key 限速冷却时间（默认 5m）
+
+    # 智谱 GLM — 通过 OpenAI 兼容 API 接入
+    zhipu:
+      keys:
+        - your-zhipu-api-key.xxxxxxxxxx
+        - your-second-key.xxxxxxxxxx
+      models:
+        - glm-5.1
+        - glm-5
+        - glm-4.7
+        - glm-4.7-flash
+      base_url: https://open.bigmodel.cn/api/paas/v4
+      endpoint: /chat/completions        # 自定义端点路径
+      thinking: false                    # 是否启用推理模式（DeepSeek-R1 等）
+
+    # Ollama 本地模型（无需 API Key）
+    ollama:
+      base_url: http://localhost:11434
+      models:
+        - llama3.2:1b
+        - qwen2.5:7b
+
+    # Anthropic Claude
+    # claude:
+    #   keys:
+    #     - sk-ant-your-claude-key
+    #   models:
+    #     - claude-sonnet-4-6
+    #     - claude-haiku-4-5
+
+    # OpenAI
+    # openai:
+    #   keys:
+    #     - sk-your-openai-key
+    #   models:
+    #     - gpt-5
+    #     - gpt-5-mini
+
+    # Moonshot Kimi
+    # moonshot:
+    #   keys:
+    #     - ${MOONSHOT_API_KEY}
+    #   models:
+    #     - moonshot-v1-8k
+    #   base_url: https://api.moonshot.cn
+
+    # 百度千帆
+    # qianfan:
+    #   keys:
+    #     - ${QIANFAN_API_KEY}
+    #   models:
+    #     - ernie-4.0-turbo
+    #   base_url: https://qianfan.baidubce.com/v2
+
+# ---------------------------------------------------------------------------
+# Agent 行为配置
+# ---------------------------------------------------------------------------
+agent:
+  # 自主级别
+  #   interactive — 交互模式，逐条响应用户输入
+  #   semi        — 半自主模式，自主规划执行，关键决策需确认
+  #   full        — 全自主模式，心跳驱动，完全独立运行
+  autonomy: interactive
+
+  tick_interval: 30s            # 自主模式心跳间隔
+  idle_sleep: 5m                # 空闲后休眠时长
+  max_turns: 50                 # 单次响应的最大 LLM 调用轮数
+
+# ---------------------------------------------------------------------------
+# 上下文窗口管理
+# ---------------------------------------------------------------------------
+context:
+  max_tokens: 128000             # 上下文窗口大小
+  compact_at: 0.85               # 触发压缩的 token 使用率阈值
+  reserve_ratio: 0.15            # 为响应保留的 token 比例
+
+  # LLM 智能压缩（推荐启用）
+  compressor_enabled: true       # 启用后，用辅助模型生成结构化摘要
+  compressor_model: deepseek-v4-flash  # 压缩用轻量模型（推荐 flash 类）
+
+# ---------------------------------------------------------------------------
+# 权限控制
+# ---------------------------------------------------------------------------
+permission:
+  # 权限模式
+  #   default — 按规则列表 glob 匹配
+  #   auto    — 全部自动批准
+  #   strict  — ask 规则同样需要确认
+  #   plan    — 仅允许读操作
+  mode: default
+
+  rules:
+    - allow: "Bash(git:*)"       # 允许所有 git 命令
+    - deny: "Bash(rm -rf *)"     # 禁止危险删除
+    # - allow: "ReadFile"        # 总是允许读文件
+    # - ask: "WriteFile"         # 写入前询问
+    # - allow: "**"              # 允许一切（谨慎使用）
+
+# ---------------------------------------------------------------------------
+# 工具配置
+# ---------------------------------------------------------------------------
+tools:
+  disabled: []                   # 禁用的工具名列表，如 ["WriteFile"]
+  disabled_toolsets: []          # 禁用的工具集，如 ["meta", "time"]
+
+# ---------------------------------------------------------------------------
+# Skill 系统
+# ---------------------------------------------------------------------------
+skills:
+  enabled: true                  # 启用 skill 系统
+  dir: ~/.gclaw/skills           # 用户 skills 目录（默认）
+  # project_dir: .gclaw/skills   # 项目内置 skills 目录（默认自动检测）
+
+# ---------------------------------------------------------------------------
+# 记忆系统
+# ---------------------------------------------------------------------------
+memory:
+  enabled: true                  # 启用跨对话记忆
+  dir: ~/.gclaw/memory           # 记忆文件目录
+  prefetch_limit: 5              # 每次召回记忆数量上限
+
+# ---------------------------------------------------------------------------
+# 会话持久化
+# ---------------------------------------------------------------------------
+session:
+  enabled: true                  # 启用 SQLite 会话持久化
+  db_path: ~/.gclaw/sessions.db  # 数据库路径
+  max_sessions: 100              # 最大保留会话数
+
+# ---------------------------------------------------------------------------
+# 统一路由层
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  platforms:
+    repl:
+      enabled: true
+    weixin:
+      enabled: false
+
+# ---------------------------------------------------------------------------
+# 子代理委派
+# ---------------------------------------------------------------------------
+delegate:
+  enabled: false                 # 启用子代理委派
+  max_concurrent: 3              # 最大并发子代理数
+  max_depth: 2                   # 最大嵌套深度（防止递归）
+  default_timeout: 5m            # 子代理超时
+
+# ---------------------------------------------------------------------------
+# 微信通道
+# ---------------------------------------------------------------------------
+channels:
+  weixin:
+    enabled: true                # 启用微信通道
+    verbose: false               # 详细调试日志
+
+# ---------------------------------------------------------------------------
+# 定时任务
+# ---------------------------------------------------------------------------
+cron:
+  enabled: true                  # 启用 cron 调度器
+  model: deepseek-v4-flash       # cron 专用模型（可选，默认用主模型）
+
+  jobs:
+    - name: github-trending
+      schedule: "0 9 * * *"      # 每天 9:00（5字段 cron）
+      prompt: |
+        使用 github-trending skill（策略A，30天）搜索 GitHub 新星项目，输出中文分类总结。
+      enabled: true
+      notify_weixin: true        # 完成后推送到微信
+
+    - name: hourly-heartbeat
+      schedule: "0 * * * *"      # 每小时
+      prompt: "确认系统状态正常，有异常及时报告。"
+      enabled: false             # 默认关闭
+      notify_weixin: false
+
+# ---------------------------------------------------------------------------
+# 日志
+# ---------------------------------------------------------------------------
+logging:
+  level: info                    # debug | info | warn | error
+
+# ---------------------------------------------------------------------------
+# 插件（MCP 服务器）
+# ---------------------------------------------------------------------------
+# plugins:
+#   mcp-servers:
+#     - name: my-server
+#       command: node
+#       args:
+#         - ./mcp-server.js
+#       env:
+#         DEBUG: "true"

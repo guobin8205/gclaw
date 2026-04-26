@@ -11,6 +11,7 @@ import (
 type AgentLoop interface {
 	Submit(ctx context.Context, message string) (string, error)
 	IsBusy() bool
+	Interrupt(message string)
 }
 
 // Scheduler orchestrates the autonomous agent lifecycle.
@@ -110,6 +111,17 @@ func (s *Scheduler) handleEvent(event Event) {
 
 	prompt := s.buildPrompt(event)
 	if prompt == "" {
+		return
+	}
+
+	// If agent is busy, interrupt for high-priority events instead of skipping
+	if s.agent.IsBusy() {
+		if event.Type == EventUser || event.Type == EventWebhook {
+			s.agent.Interrupt(prompt)
+			slog.Info("agent busy, interrupting with event", "type", event.Type)
+			return
+		}
+		slog.Debug("agent busy, skipping event", "type", event.Type)
 		return
 	}
 
