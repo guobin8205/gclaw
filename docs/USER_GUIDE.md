@@ -112,6 +112,38 @@ permission:
     - allow: "ReadFile"           # 总是允许读文件
     # - ask: "WriteFile"          # 写入前询问
 
+tools:
+  disabled: []                    # 禁用的工具名列表
+  disabled_toolsets: []           # 禁用的工具集列表（如 ["meta"]）
+
+skills:
+  enabled: true                   # 启用 skill 系统
+  dir: ~/.gclaw/skills            # skill 文件目录（默认）
+
+memory:
+  enabled: true                   # 启用记忆系统
+  dir: ~/.gclaw/memory            # 记忆文件目录
+  prefetch_limit: 5               # 召回记忆数量上限
+
+session:
+  enabled: true                   # 启用会话持久化
+  db_path: ~/.gclaw/sessions.db   # SQLite 数据库路径
+  max_sessions: 100               # 最大保留会话数
+
+gateway:
+  enabled: true                   # 启用统一路由层
+  platforms:
+    repl:
+      enabled: true
+    weixin:
+      enabled: false
+
+delegate:
+  enabled: false                  # 启用子代理委派
+  max_concurrent: 3               # 最大并发子代理
+  max_depth: 2                    # 最大嵌套深度
+  default_timeout: 5m             # 子代理超时
+
 channels:
   weixin:
     enabled: true                 # 启用微信通道
@@ -119,19 +151,14 @@ channels:
 
 cron:
   enabled: true                   # 启用定时任务调度器
-  model: deepseek-v4-flash        # 可选：定时任务专用模型（不设则用默认）
+  model: deepseek-v4-flash        # 可选：定时任务专用模型
   jobs:
-    - name: daily-check           # 任务名（唯一标识）
-      schedule: "0 9 * * *"       # 5 字段 cron 表达式
-      prompt: "生成今日工作计划"    # 触发时发给 Agent 的指令
-      enabled: true               # 可单独启停每个任务
-      notify_weixin: true         # 完成后推送到微信
-
-    - name: pr-review
-      schedule: "*/30 * * * *"    # 每 30 分钟
-      prompt: "检查分支上的 TODO 和 FIXME"
+    - name: github-trending       # 任务名
+      schedule: "0 9 * * *"       # cron 表达式
+      prompt: |                   # 发给 Agent 的指令
+        使用 github-trending skill（策略A，30天）搜索 GitHub 新星项目。
       enabled: true
-      notify_weixin: false
+      notify_weixin: true         # 完成后推送到微信
 
 logging:
   level: info                     # debug | info | warn | error
@@ -196,7 +223,7 @@ gclaw dev — interactive mode | deepseek-v4-pro | type /help
 | `/stats` | 查看上下文和 token 用量 |
 | `/autonomy` | 查看自主调度器状态 |
 | `/config` | 显示当前配置 |
-| `/weixin` | 微信通道 login|logout|status |
+| `/weixin` | 微信通道 login\|logout\|status |
 | `/cron` | 查看定时任务状态 |
 | `/tasks` | 列出后台任务 |
 | `/compact` | 手动压缩上下文 |
@@ -228,37 +255,105 @@ Agent 通过心跳驱动完全独立运行：
 
 ## 可用工具
 
-GClaw 通过工具调用能力与环境交互：
+### 内置工具
 
-### ReadFile
+| 工具 | 工具集 | 用途 | 需要审批 |
+|------|--------|------|---------|
+| ReadFile | read | 读取文件内容 | 否 |
+| WriteFile | write | 创建/覆写文件 | 是 |
+| Bash | shell | 执行 Shell 命令 | 部分（安全命令自动通过） |
+| Glob | search | 文件名模式匹配 | 否 |
+| Grep | search | 正则搜索文件内容 | 否 |
+| SleepTool | time | 自主模式休眠 | 否 |
+
+Bash 安全命令白名单：`git status`, `git diff`, `git log`, `ls`, `cat`, `echo`, `pwd`, `whoami`, `which`
+
+### 元工具
+
+| 工具 | 用途 |
+|------|------|
+| `cron_list` | 列出所有 cron 任务 |
+| `cron_run` | 立即执行指定 cron 任务 |
+| `weixin_status` | 查看微信通道状态 |
+| `tasks_list` | 查看后台任务列表 |
+| `delegate_task` | 委派子代理执行任务 |
+
+### Skill 工具
+
+| 工具 | 用途 |
+|------|------|
+| `skill_list` | 列出所有已加载 skill |
+| `skill_create` | 创建新 skill |
+| `skill_delete` | 删除 Agent 创建的 skill |
+
+## Skill 系统
+
+Skill 是可复用的程序性知识单元，以 SKILL.md 文件存储。
+
+### 目录结构
+
 ```
-参数：file_path (必填), offset (选填), limit (选填)
-说明：读取文件内容
+~/.gclaw/skills/
+├── user/                  # 用户手写（优先）
+│   └── my-skill/
+│       └── SKILL.md
+└── agent/                 # Agent 自创建
+    └── some-skill/
+        └── SKILL.md
 ```
 
-### WriteFile
-```
-参数：file_path (必填), content (必填)
-说明：创建或覆写文件（需要权限确认）
+### SKILL.md 格式
+
+```markdown
+---
+name: my-skill
+description: 技能描述（用于系统提示词）
+---
+
+## 指令
+
+当用户要求...时，执行以下操作：
+...
 ```
 
-### Bash
-```
-参数：command (必填), description (选填), timeout (选填)
-说明：执行 Shell 命令
-安全命令自动放行：git status, git diff, git log, ls, cat, echo, pwd, whoami, which
+### 使用
+
+Skill 在启动时自动加载并注入 Agent 的 system prompt。用户只需在对话中提及相关话题，Agent 即会遵循 skill 指令。
+
+配置：
+```yaml
+skills:
+  enabled: true
 ```
 
-### Glob
-```
-参数：pattern (必填), path (选填)
-说明：按 glob 模式查找文件，如 **/*.go, src/**/*.ts
+## 记忆系统
+
+Agent 跨对话记住用户偏好和上下文。
+
+### 工作原理
+
+1. 用户发消息时，搜索相关记忆并注入上下文
+2. 对话结束后，将关键信息写入记忆文件
+3. 存储在 `~/.gclaw/memory/`
+
+配置：
+```yaml
+memory:
+  enabled: true
+  dir: ~/.gclaw/memory
+  prefetch_limit: 5
 ```
 
-### Grep
-```
-参数：pattern (必填), path (选填), include (选填)
-说明：正则搜索文件内容，可用 include 过滤文件类型
+## 会话持久化
+
+对话历史自动保存到 SQLite 数据库，支持全文搜索。
+
+配置：
+```yaml
+session:
+  enabled: true
+  db_path: ~/.gclaw/sessions.db
+  max_sessions: 100
 ```
 
 ## 定时任务
@@ -269,13 +364,17 @@ GClaw 内置 cron 调度器，可定期向 Agent 发送指令，执行自动化�
 
 ```yaml
 cron:
-  enabled: true                   # 全局开关
+  enabled: true
+  model: deepseek-v4-flash    # 可选：专用模型
   jobs:
-    - name: daily-check           # 任务名（唯一标识）
-      schedule: "0 9 * * *"       # 5 字段 cron 表达式
-      prompt: "生成今日工作计划"    # 触发时发给 Agent 的指令
-      enabled: true               # 可单独启停
+    - name: daily-check
+      schedule: "0 9 * * *"
+      prompt: "生成今日工作计划"
+      enabled: true
+      notify_weixin: true
 ```
+
+Cron Agent 的 system prompt 包含所有 skill 指令，prompt 中可直接引用 skill。
 
 在 REPL 中输入 `/cron` 查看所有作业状态：
 
@@ -322,10 +421,12 @@ cron:
   schedule: "55 8 * * 1-5"
   prompt: "检查昨晚是否有新错误日志，汇总最近的代码变更"
 
-# 每 30 分钟检查 PR 状态
-- name: pr-watch
-  schedule: "*/30 * * * *"
-  prompt: "检查当前分支的 TODO 和 FIXME 并报告进度"
+# GitHub 热点速递
+- name: github-trending
+  schedule: "0 9 * * *"
+  prompt: |
+    使用 github-trending skill（策略A，30天）搜索 GitHub 新星项目，输出中文分类总结。
+  notify_weixin: true
 
 # 每小时心跳确认
 - name: heartbeat
@@ -339,6 +440,7 @@ cron:
 - 如果 Agent 正忙（上一次调用未结束），该次触发会被跳过
 - 每次作业执行超时 5 分钟
 - `run_count` 是从启动开始的累计执行次数，重启后归零
+- 可在 REPL 中通过 `cron_run <任务名>` 立即执行测试
 
 ## 微信通道
 
@@ -384,18 +486,11 @@ channels:
 
 ### Cron 推送
 
-定时任务可配置 `notify_weixin: true`，执行完毕后自动将结果推送到微信：
+定时任务可配置 `notify_weixin: true`，执行完毕后自动将结果推送到微信。
 
-```yaml
-cron:
-  jobs:
-    - name: github-trending
-      schedule: "0 9 * * *"
-      prompt: "搜索 GitHub 热点..."
-      notify_weixin: true   # 完成后推送微信
-```
+推送机制：使用最后一次用户消息的 context_token 发送，确保微信 API 正确投递。
 
-推送流程：Cron 触发 → cronAgent 执行 → 结果通过微信通道发送给最近交互的用户。
+**注意**：首次推送前需要至少通过微信给 bot 发过一条消息（获取 context_token）。
 
 ### 数据存储
 
@@ -486,6 +581,20 @@ providers:
 
 手动压缩：对话中输入 `/compact`
 
+## 子代理委派
+
+主 Agent 可将复杂任务委派给子代理并行执行。
+
+```yaml
+delegate:
+  enabled: true
+  max_concurrent: 3
+  max_depth: 2
+  default_timeout: 5m
+```
+
+使用 `delegate_task` 元工具指定目标，子代理拥有独立的消息历史和受限的工具集（禁止递归委派）。
+
 ## 日志与调试
 
 ```yaml
@@ -495,10 +604,11 @@ logging:
 
 Debug 模式输出日志示例：
 ```
-2026/04/26 13:12:18 INFO gclaw starting version=dev autonomy=interactive
-2026/04/26 13:12:18 DEBUG running agent input="读取 go.mod 文件"
-2026/04/26 13:12:18 DEBUG agent turn turn=1 messages=1
-2026/04/26 13:12:21 DEBUG agent turn turn=2 messages=3
+2026/04/26 22:48:00 INFO gclaw starting version=dev autonomy=interactive
+2026/04/26 22:48:00 INFO skill: loaded count=2
+2026/04/26 22:48:00 DEBUG running agent input="搜索 GitHub 热点"
+2026/04/26 22:48:00 DEBUG agent turn turn=1 messages=1
+2026/04/26 22:48:04 DEBUG agent turn turn=2 messages=3
 ```
 
 ## 常见问题
@@ -509,6 +619,19 @@ Debug 模式输出日志示例：
 1. `.gclaw/config.yaml` 中是否配置了 `model.providers`
 2. 是否设置了对应的环境变量 API Key
 3. 运行 `./gclaw.exe config dump` 确认配置加载情况
+
+### Q: Skill 没有生效
+
+检查：
+1. `skills: enabled: true` 在配置中
+2. SKILL.md 文件在 `~/.gclaw/skills/user/<name>/` 目录下
+3. 启动日志有 `skill: loaded count=N`
+
+### Q: Cron 推送微信失败（ret:-2）
+
+推送需要有效的 context_token，确保：
+1. 微信已连接
+2. 通过微信给 bot 发过至少一条消息
 
 ### Q: 回复是乱码
 
@@ -540,4 +663,10 @@ rm -rf .gclaw
 |------|------|
 | `.gclaw/config.yaml` | 项目级配置（可提交到版本控制） |
 | `~/.gclaw/config.yaml` | 用户级配置（API Key 等敏感信息） |
+| `~/.gclaw/skills/user/*/SKILL.md` | 用户手写 skill |
+| `~/.gclaw/skills/agent/*/SKILL.md` | Agent 自创建 skill |
+| `~/.gclaw/memory/MEMORY.md` | 记忆索引 |
+| `~/.gclaw/memory/*.md` | 记忆条目 |
+| `~/.gclaw/sessions.db` | 会话数据库 |
+| `~/.gclaw/weixin/` | 微信登录状态 |
 | `gclaw.exe` | 编译产物 |

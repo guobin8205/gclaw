@@ -1,4 +1,4 @@
-package builtin
+package file_read
 
 import (
 	"context"
@@ -8,15 +8,17 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 )
 
-// ReadFile reads the contents of a file.
-type ReadFile struct{}
+// ReadFileTool reads the contents of a file.
+type ReadFileTool struct{}
 
-func (t *ReadFile) Name() string        { return "ReadFile" }
-func (t *ReadFile) Description() string { return "Read the contents of a file at the given path." }
-func (t *ReadFile) ConcurrencySafe() bool { return true }
-func (t *ReadFile) RequiresApproval(params map[string]any) bool { return false }
+func (t *ReadFileTool) Name() string        { return "ReadFile" }
+func (t *ReadFileTool) Toolset() string       { return "read" }
+func (t *ReadFileTool) Description() string { return "Read the contents of a file at the given path." }
+func (t *ReadFileTool) Check() bool            { return true }
+func (t *ReadFileTool) ConcurrencySafe() bool  { return true }
+func (t *ReadFileTool) RequiresApproval(params map[string]any) bool { return false }
 
-func (t *ReadFile) InputSchema() tool.Schema {
+func (t *ReadFileTool) InputSchema() tool.Schema {
 	return tool.Schema{
 		Type: "object",
 		Properties: map[string]tool.Property{
@@ -28,7 +30,7 @@ func (t *ReadFile) InputSchema() tool.Schema {
 	}
 }
 
-func (t *ReadFile) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
+func (t *ReadFileTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
 	filePath, ok := params["file_path"].(string)
 	if !ok {
 		return tool.ToolResult{Content: "Error: file_path is required", IsError: true}, nil
@@ -43,4 +45,8 @@ func (t *ReadFile) Execute(ctx context.Context, params map[string]any) (tool.Too
 	}
 
 	return tool.ToolResult{Content: string(data)}, nil
+}
+
+func init() {
+	tool.GlobalRegistry.Register(&ReadFileTool{})
 }

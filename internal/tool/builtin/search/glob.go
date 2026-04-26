@@ -1,4 +1,4 @@
-package builtin
+package search
 
 import (
 	"context"
@@ -11,17 +11,19 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 )
 
-// Glob finds files matching a pattern.
-type Glob struct{}
+// GlobTool finds files matching a pattern.
+type GlobTool struct{}
 
-func (t *Glob) Name() string        { return "Glob" }
-func (t *Glob) Description() string {
+func (t *GlobTool) Name() string        { return "Glob" }
+func (t *GlobTool) Toolset() string       { return "search" }
+func (t *GlobTool) Description() string {
 	return "Find files matching a glob pattern (e.g., **/*.go, src/**/*.ts)."
 }
-func (t *Glob) ConcurrencySafe() bool { return true }
-func (t *Glob) RequiresApproval(params map[string]any) bool { return false }
+func (t *GlobTool) Check() bool            { return true }
+func (t *GlobTool) ConcurrencySafe() bool  { return true }
+func (t *GlobTool) RequiresApproval(params map[string]any) bool { return false }
 
-func (t *Glob) InputSchema() tool.Schema {
+func (t *GlobTool) InputSchema() tool.Schema {
 	return tool.Schema{
 		Type: "object",
 		Properties: map[string]tool.Property{
@@ -32,7 +34,7 @@ func (t *Glob) InputSchema() tool.Schema {
 	}
 }
 
-func (t *Glob) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
+func (t *GlobTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
 	pattern, ok := params["pattern"].(string)
 	if !ok {
 		return tool.ToolResult{Content: "Error: pattern is required", IsError: true}, nil
@@ -44,11 +46,10 @@ func (t *Glob) Execute(ctx context.Context, params map[string]any) (tool.ToolRes
 	}
 
 	var matches []string
-	err := filepath.Walk(searchDir, func(path string, info os.FileInfo, err error) error {
+	filepath.Walk(searchDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip on error
+			return nil
 		}
-		// Skip .git and node_modules
 		if info.IsDir() {
 			name := info.Name()
 			if name == ".git" || name == "node_modules" || name == "__pycache__" || name == ".claude" {
@@ -68,20 +69,12 @@ func (t *Glob) Execute(ctx context.Context, params map[string]any) (tool.ToolRes
 			return nil
 		}
 
-		// Also try matching against the full relative path
 		matched, err = filepath.Match(pattern, rel)
 		if err == nil && matched {
 			matches = append(matches, rel)
 		}
 		return nil
 	})
-
-	if err != nil {
-		return tool.ToolResult{
-			Content: fmt.Sprintf("Error walking directory: %v", err),
-			IsError: true,
-		}, nil
-	}
 
 	sort.Strings(matches)
 
@@ -92,4 +85,8 @@ func (t *Glob) Execute(ctx context.Context, params map[string]any) (tool.ToolRes
 	return tool.ToolResult{
 		Content: fmt.Sprintf("Found %d files:\n%s", len(matches), strings.Join(matches, "\n")),
 	}, nil
+}
+
+func init() {
+	tool.GlobalRegistry.Register(&GlobTool{})
 }

@@ -151,7 +151,7 @@ func (c *Client) GetUpdates(ctx context.Context, buf string, timeoutMs int) (*Ge
 
 // SendMessage sends a text message to a user.
 func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken string) error {
-	_, err := c.postJSON(ctx, "/ilink/bot/sendmessage", map[string]any{
+	data, err := c.postJSON(ctx, "/ilink/bot/sendmessage", map[string]any{
 		"msg": map[string]any{
 			"from_user_id":  "",
 			"to_user_id":    toUserID,
@@ -168,7 +168,17 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken s
 		},
 		"base_info": map[string]string{"channel_version": channelVersion},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	slog.Debug("weixin: sendmessage response", "body", string(data))
+	var resp struct {
+		Ret int `json:"ret"`
+	}
+	if json.Unmarshal(data, &resp) == nil && resp.Ret != 0 {
+		return fmt.Errorf("weixin: sendmessage ret=%d body=%s", resp.Ret, string(data))
+	}
+	return nil
 }
 
 // generateClientID creates a random client message ID.

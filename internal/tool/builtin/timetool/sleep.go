@@ -1,27 +1,31 @@
-package builtin
+package timetool
 
 import (
 	"context"
 	"fmt"
 	"time"
 
-	"github.com/openclaw/gclaw/internal/tool"
 	"github.com/openclaw/gclaw/internal/autonomous"
+	"github.com/openclaw/gclaw/internal/tool"
 )
 
-// Sleep pauses the autonomous agent for a configurable duration.
-type Sleep struct {
+// SleepTool pauses the autonomous agent for a configurable duration.
+type SleepTool struct {
 	Sleeper *autonomous.Sleeper
 }
 
-func (t *Sleep) Name() string        { return "SleepTool" }
-func (t *Sleep) Description() string {
+func (t *SleepTool) Name() string        { return "SleepTool" }
+func (t *SleepTool) Toolset() string     { return "time" }
+func (t *SleepTool) Description() string {
 	return "Sleep for a specified duration when there is nothing useful to do. The agent will wake when the duration expires or when an external event occurs."
 }
-func (t *Sleep) ConcurrencySafe() bool  { return true }
-func (t *Sleep) RequiresApproval(params map[string]any) bool { return false }
+func (t *SleepTool) Check() bool           { return t.Sleeper != nil }
+func (t *SleepTool) ConcurrencySafe() bool { return true }
+func (t *SleepTool) RequiresApproval(params map[string]any) bool {
+	return false
+}
 
-func (t *Sleep) InputSchema() tool.Schema {
+func (t *SleepTool) InputSchema() tool.Schema {
 	return tool.Schema{
 		Type: "object",
 		Properties: map[string]tool.Property{
@@ -32,7 +36,7 @@ func (t *Sleep) InputSchema() tool.Schema {
 	}
 }
 
-func (t *Sleep) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
+func (t *SleepTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
 	durationStr, _ := params["duration"].(string)
 	if durationStr == "" {
 		durationStr = "5m"
@@ -46,7 +50,6 @@ func (t *Sleep) Execute(ctx context.Context, params map[string]any) (tool.ToolRe
 		}, nil
 	}
 
-	// Cap at 1 hour
 	if d > time.Hour {
 		d = time.Hour
 	}
@@ -57,15 +60,17 @@ func (t *Sleep) Execute(ctx context.Context, params map[string]any) (tool.ToolRe
 	}
 
 	if t.Sleeper != nil {
-		// Request sleep through the scheduler
 		t.Sleeper.RequestSleep(d)
 		return tool.ToolResult{
 			Content: fmt.Sprintf("Sleeping for %s (reason: %s). Will wake on event or timeout.", d, reason),
 		}, nil
 	}
 
-	// Fallback: direct sleep if no sleeper (interactive mode shouldn't use SleepTool)
 	return tool.ToolResult{
 		Content: "SleepTool called outside autonomous mode. This is a no-op in interactive mode.",
 	}, nil
+}
+
+func init() {
+	tool.GlobalRegistry.Register(&SleepTool{})
 }

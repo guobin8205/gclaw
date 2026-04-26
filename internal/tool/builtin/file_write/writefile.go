@@ -1,4 +1,4 @@
-package builtin
+package file_write
 
 import (
 	"context"
@@ -9,15 +9,17 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 )
 
-// WriteFile creates or overwrites a file with content.
-type WriteFile struct{}
+// WriteFileTool creates or overwrites a file with content.
+type WriteFileTool struct{}
 
-func (t *WriteFile) Name() string        { return "WriteFile" }
-func (t *WriteFile) Description() string { return "Write content to a file, overwriting if it exists." }
-func (t *WriteFile) ConcurrencySafe() bool { return false }
-func (t *WriteFile) RequiresApproval(params map[string]any) bool { return true }
+func (t *WriteFileTool) Name() string        { return "WriteFile" }
+func (t *WriteFileTool) Toolset() string       { return "write" }
+func (t *WriteFileTool) Description() string { return "Write content to a file, overwriting if it exists." }
+func (t *WriteFileTool) Check() bool            { return true }
+func (t *WriteFileTool) ConcurrencySafe() bool  { return false }
+func (t *WriteFileTool) RequiresApproval(params map[string]any) bool { return true }
 
-func (t *WriteFile) InputSchema() tool.Schema {
+func (t *WriteFileTool) InputSchema() tool.Schema {
 	return tool.Schema{
 		Type: "object",
 		Properties: map[string]tool.Property{
@@ -28,7 +30,7 @@ func (t *WriteFile) InputSchema() tool.Schema {
 	}
 }
 
-func (t *WriteFile) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
+func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
 	filePath, ok := params["file_path"].(string)
 	if !ok {
 		return tool.ToolResult{Content: "Error: file_path is required", IsError: true}, nil
@@ -54,4 +56,8 @@ func (t *WriteFile) Execute(ctx context.Context, params map[string]any) (tool.To
 	}
 
 	return tool.ToolResult{Content: fmt.Sprintf("File written: %s (%d bytes)", filePath, len(content))}, nil
+}
+
+func init() {
+	tool.GlobalRegistry.Register(&WriteFileTool{})
 }

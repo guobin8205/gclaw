@@ -37,7 +37,8 @@ type Channel struct {
 	userID       string
 	connected    bool
 	lastMsgAt    time.Time
-	lastFromUser string
+	lastFromUser    string
+	lastContextToken string
 	msgCount     int64
 
 	ctx    context.Context
@@ -194,6 +195,7 @@ func (ch *Channel) handleMessage(msg WeixinMessage) {
 	ch.mu.Lock()
 	ch.lastMsgAt = time.Now()
 	ch.lastFromUser = msg.FromUserID
+		ch.lastContextToken = msg.ContextToken
 	ch.msgCount++
 	ch.mu.Unlock()
 
@@ -274,7 +276,10 @@ func (ch *Channel) Send(ctx context.Context, to, text string) error {
 	if ch.client == nil {
 		return fmt.Errorf("weixin: not connected")
 	}
-	return ch.client.SendMessage(ctx, to, text, "")
+	ch.mu.RLock()
+	token := ch.lastContextToken
+	ch.mu.RUnlock()
+	return ch.client.SendMessage(ctx, to, text, token)
 }
 
 // Status returns current channel state.

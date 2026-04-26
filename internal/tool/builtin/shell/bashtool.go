@@ -1,4 +1,4 @@
-package builtin
+package shell
 
 import (
 	"context"
@@ -11,22 +11,23 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 )
 
-// Bash executes shell commands.
-type Bash struct {
+// BashTool executes shell commands.
+type BashTool struct {
 	DefaultTimeout time.Duration
 }
 
-func (t *Bash) Name() string        { return "Bash" }
-func (t *Bash) Description() string {
+func (t *BashTool) Name() string  { return "Bash" }
+func (t *BashTool) Toolset() string { return "shell" }
+func (t *BashTool) Description() string {
 	return fmt.Sprintf("Execute a shell command and return stdout/stderr. Shell: %s", resolveShell())
 }
-func (t *Bash) ConcurrencySafe() bool { return false }
-func (t *Bash) RequiresApproval(params map[string]any) bool {
+func (t *BashTool) Check() bool            { return true }
+func (t *BashTool) ConcurrencySafe() bool  { return false }
+func (t *BashTool) RequiresApproval(params map[string]any) bool {
 	cmd, ok := params["command"].(string)
 	if !ok {
 		return true
 	}
-	// Auto-approve safe git/read-only commands
 	safe := []string{"git status", "git diff", "git log", "ls", "cat", "echo", "pwd", "whoami", "which"}
 	for _, s := range safe {
 		if strings.HasPrefix(strings.TrimSpace(cmd), s) {
@@ -36,7 +37,7 @@ func (t *Bash) RequiresApproval(params map[string]any) bool {
 	return true
 }
 
-func (t *Bash) InputSchema() tool.Schema {
+func (t *BashTool) InputSchema() tool.Schema {
 	return tool.Schema{
 		Type: "object",
 		Properties: map[string]tool.Property{
@@ -48,7 +49,7 @@ func (t *Bash) InputSchema() tool.Schema {
 	}
 }
 
-func (t *Bash) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
+func (t *BashTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
 	command, ok := params["command"].(string)
 	if !ok {
 		return tool.ToolResult{Content: "Error: command is required", IsError: true}, nil
@@ -97,8 +98,6 @@ func (t *Bash) Execute(ctx context.Context, params map[string]any) (tool.ToolRes
 	return tool.ToolResult{Content: string(output)}, nil
 }
 
-// resolveShell picks the best available shell: powershell (Windows native) > sh > bash > cmd.
-// On Windows, even Git's bash/sh can hit WSL proxy issues, so use powershell first.
 func resolveShell() string {
 	if _, err := exec.LookPath("powershell"); err == nil {
 		return "powershell"
@@ -112,22 +111,18 @@ func resolveShell() string {
 	return "cmd"
 }
 
-// sanitizeOutput converts UTF-16 output to valid UTF-8.
 func sanitizeOutput(raw []byte) []byte {
 	if utf8.Valid(raw) {
 		return raw
 	}
 	if len(raw) >= 2 {
-		// UTF-16 LE BOM
 		if raw[0] == 0xFF && raw[1] == 0xFE {
 			return utf16LEToUTF8(raw[2:])
 		}
-		// UTF-16 BE BOM
 		if raw[0] == 0xFE && raw[1] == 0xFF {
 			return utf16BEToUTF8(raw[2:])
 		}
 	}
-	// UTF-16 LE without BOM: every other byte is null for ASCII content
 	if len(raw) > 4 && raw[1] == 0x00 && raw[3] == 0x00 && raw[5] == 0x00 {
 		return utf16LEToUTF8(raw)
 	}
@@ -150,4 +145,8 @@ func utf16BEToUTF8(raw []byte) []byte {
 		out.WriteRune(r)
 	}
 	return []byte(out.String())
+}
+
+func init() {
+	tool.GlobalRegistry.Register(&BashTool{})
 }

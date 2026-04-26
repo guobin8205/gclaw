@@ -24,6 +24,8 @@ func (e *mockExecutor) IsBusy() bool {
 	return e.busy
 }
 
+func (e *mockExecutor) Reset() {}
+
 func (e *mockExecutor) lastPrompt() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()

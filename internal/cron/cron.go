@@ -99,6 +99,31 @@ func (s *Scheduler) Jobs() []*Job {
 	return jobs
 }
 
+// RunNow immediately executes a job by name, bypassing schedule.
+func (s *Scheduler) RunNow(ctx context.Context, name string) (string, error) {
+	s.mu.RLock()
+	job, ok := s.jobs[name]
+	s.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("job %q not found", name)
+	}
+	if !job.Enabled {
+		return "", fmt.Errorf("job %q is disabled", name)
+	}
+
+	slog.Info("cron: RunNow triggered", "name", name)
+	result, err := s.executor.Submit(ctx, job.Prompt)
+	if err != nil {
+		return "", err
+	}
+
+	job.RunCount++
+	if job.OnResult != nil {
+		job.OnResult(job.Name, job.Prompt, result)
+	}
+	return result, nil
+}
+
 // Start begins the cron loop, checking every second for due jobs.
 func (s *Scheduler) Start() {
 	slog.Info("cron scheduler starting", "jobs", len(s.jobs))

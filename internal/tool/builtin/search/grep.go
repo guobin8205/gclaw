@@ -1,4 +1,4 @@
-package builtin
+package search
 
 import (
 	"bufio"
@@ -12,17 +12,19 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 )
 
-// Grep searches for a pattern in files.
-type Grep struct{}
+// GrepTool searches for a pattern in files.
+type GrepTool struct{}
 
-func (t *Grep) Name() string        { return "Grep" }
-func (t *Grep) Description() string {
+func (t *GrepTool) Name() string        { return "Grep" }
+func (t *GrepTool) Toolset() string       { return "search" }
+func (t *GrepTool) Description() string {
 	return "Search for a regex pattern in file contents within a directory."
 }
-func (t *Grep) ConcurrencySafe() bool { return true }
-func (t *Grep) RequiresApproval(params map[string]any) bool { return false }
+func (t *GrepTool) Check() bool            { return true }
+func (t *GrepTool) ConcurrencySafe() bool  { return true }
+func (t *GrepTool) RequiresApproval(params map[string]any) bool { return false }
 
-func (t *Grep) InputSchema() tool.Schema {
+func (t *GrepTool) InputSchema() tool.Schema {
 	return tool.Schema{
 		Type: "object",
 		Properties: map[string]tool.Property{
@@ -34,7 +36,7 @@ func (t *Grep) InputSchema() tool.Schema {
 	}
 }
 
-func (t *Grep) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
+func (t *GrepTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
 	pattern, ok := params["pattern"].(string)
 	if !ok {
 		return tool.ToolResult{Content: "Error: pattern is required", IsError: true}, nil
@@ -115,4 +117,8 @@ func (t *Grep) Execute(ctx context.Context, params map[string]any) (tool.ToolRes
 	}
 
 	return tool.ToolResult{Content: sb.String()}, nil
+}
+
+func init() {
+	tool.GlobalRegistry.Register(&GrepTool{})
 }

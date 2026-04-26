@@ -19,9 +19,15 @@ type Config struct {
 	Context    ContextConfig    `yaml:"context"`
 	Permission PermissionConfig `yaml:"permission"`
 	Triggers   TriggersConfig   `yaml:"triggers"`
+	Tools      ToolsConfig      `yaml:"tools"`
 	Cron       CronConfig       `yaml:"cron"`
 	Channels   ChannelsConfig   `yaml:"channels"`
 	Plugins    PluginsConfig    `yaml:"plugins"`
+	Skills     SkillsConfig     `yaml:"skills"`
+	Memory     MemoryConfig     `yaml:"memory"`
+	Session    SessionConfig    `yaml:"session"`
+	Gateway    GatewayConfig    `yaml:"gateway"`
+	Delegate   DelegateConfig   `yaml:"delegate"`
 	Logging    LoggingConfig    `yaml:"logging"`
 }
 
@@ -115,6 +121,51 @@ type WechatConfig struct {
 type WebhookConfig struct {
 	Listen    string `yaml:"listen"`
 	AuthToken string `yaml:"auth_token"`
+}
+
+// ToolsConfig holds tool registry configuration.
+type ToolsConfig struct {
+	Disabled         []string `yaml:"disabled"`
+	DisabledToolsets []string `yaml:"disabled_toolsets"`
+}
+
+// SkillsConfig holds skill system configuration.
+type SkillsConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Dir     string `yaml:"dir"`
+}
+
+// DelegateConfig holds sub-agent delegation configuration.
+type DelegateConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	MaxConcurrent  int    `yaml:"max_concurrent"`
+	MaxDepth       int    `yaml:"max_depth"`
+	DefaultTimeout string `yaml:"default_timeout"`
+}
+
+// GatewayConfig holds gateway configuration.
+type GatewayConfig struct {
+	Enabled   bool                   `yaml:"enabled"`
+	Platforms map[string]PlatformCfg `yaml:"platforms"`
+}
+
+// PlatformCfg holds a single platform's settings.
+type PlatformCfg struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// SessionConfig holds session persistence configuration.
+type SessionConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	DBPath      string `yaml:"db_path"`
+	MaxSessions int    `yaml:"max_sessions"`
+}
+
+// MemoryConfig holds memory provider configuration.
+type MemoryConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	Dir           string `yaml:"dir"`
+	PrefetchLimit int    `yaml:"prefetch_limit"`
 }
 
 // PluginsConfig holds plugin system configuration.
@@ -302,6 +353,57 @@ func merge(dst *Config, src Config) {
 	if len(src.Plugins.MCPServers) > 0 {
 		dst.Plugins.MCPServers = src.Plugins.MCPServers
 	}
+	// Skills merge
+	if src.Skills.Enabled {
+		dst.Skills.Enabled = true
+	}
+	if src.Skills.Dir != "" {
+		dst.Skills.Dir = src.Skills.Dir
+	}
+	// Memory merge
+	if src.Memory.Enabled {
+		dst.Memory.Enabled = true
+	}
+	if src.Memory.Dir != "" {
+		dst.Memory.Dir = src.Memory.Dir
+	}
+	if src.Memory.PrefetchLimit > 0 {
+		dst.Memory.PrefetchLimit = src.Memory.PrefetchLimit
+	}
+	// Session merge
+	if src.Session.Enabled {
+		dst.Session.Enabled = true
+	}
+	if src.Session.DBPath != "" {
+		dst.Session.DBPath = src.Session.DBPath
+	}
+	if src.Session.MaxSessions > 0 {
+		dst.Session.MaxSessions = src.Session.MaxSessions
+	}
+	// Gateway merge
+	if src.Gateway.Enabled {
+		dst.Gateway.Enabled = true
+	}
+	if src.Gateway.Platforms != nil {
+		dst.Gateway.Platforms = src.Gateway.Platforms
+	}
+	// Delegate merge
+	if src.Delegate.Enabled {
+		dst.Delegate.Enabled = true
+	}
+	if src.Delegate.MaxConcurrent > 0 {
+		dst.Delegate.MaxConcurrent = src.Delegate.MaxConcurrent
+	}
+	if src.Delegate.MaxDepth > 0 {
+		dst.Delegate.MaxDepth = src.Delegate.MaxDepth
+	}
+	if src.Delegate.DefaultTimeout != "" {
+		dst.Delegate.DefaultTimeout = src.Delegate.DefaultTimeout
+	}
+	// Cron.Model merge
+	if src.Cron.Model != "" {
+		dst.Cron.Model = src.Cron.Model
+	}
 }
 
 var envVarRe = regexp.MustCompile(`\$\{([^}]+)\}`)
@@ -458,4 +560,15 @@ func FindStringInSlice(slice []string, target string) bool {
 // TrimPathSeparator normalizes path separators for the current OS.
 func TrimPathSeparator(path string) string {
 	return strings.TrimRight(path, string(filepath.Separator))
+}
+
+// ExpandPath expands ~ in a path to the user's home directory.
+func ExpandPath(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = filepath.Join(home, path[1:])
+		}
+	}
+	return filepath.Clean(path)
 }

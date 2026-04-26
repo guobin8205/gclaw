@@ -19,6 +19,10 @@ gclaw/
 │   ├── config/          # 配置加载与验证
 │   ├── context/         # 上下文窗口管理
 │   ├── cron/            # 定时任务调度器
+│   ├── delegate/        # 子代理委派 (Dispatcher)
+│   ├── gateway/         # 统一路由层 (SessionSource)
+│   │   └── adapter/     # REPL/微信适配器
+│   ├── memory/          # 记忆系统 (Provider 接口)
 │   ├── model/           # LLM 模型接口与实现
 │   │   ├── claude/      # Anthropic Claude 客户端
 │   │   ├── openai/      # OpenAI 及兼容 API 客户端
@@ -28,9 +32,19 @@ gclaw/
 │   │   └── mock.go      # 测试用 Mock 提供者
 │   ├── perm/            # 权限检查器
 │   ├── provider/        # 模型工厂 (注册与构建)
+│   ├── session/         # SQLite + FTS5 会话持久化
+│   ├── skill/           # Skill 文件系统 (YAML frontmatter)
 │   ├── task/            # 后台任务管理
 │   ├── tool/            # 工具接口与注册表
-│   │   └── builtin/     # 内置工具实现
+│   │   └── builtin/     # 内置工具（自注册）
+│   │       ├── shell/       # Bash (toolset: shell)
+│   │       ├── file_read/   # ReadFile (toolset: read)
+│   │       ├── file_write/  # WriteFile (toolset: write)
+│   │       ├── search/      # Glob + Grep (toolset: search)
+│   │       ├── timetool/    # SleepTool (toolset: time)
+│   │       ├── meta/        # 元工具: delegate_task, cron_*, weixin_status, tasks_list
+│   │       ├── skill_tools/ # skill_create, skill_delete, skill_list
+│   │       └── github_trending/ # GitHub 热点搜索
 │   └── remote/          # 远程桥接模式
 ├── pkg/
 │   └── proto/           # gRPC/Protobuf 定义
@@ -46,18 +60,21 @@ gclaw/
 ### 数据流
 
 ```
-                    ┌──────────────────────────────┐
-                    │          main.go              │
-                    │  三个独立 Agent 实例           │
-                    │                              │
- 用户输入 (stdin)    │  ag (REPL)      MaxTurns 100 │
-────────────▶       │  weixinAgent     MaxTurns  20 │
-                    │  cronAgent       MaxTurns  10 │
- 微信消息            │                              │
-────────────▶       │  + Cron 调度器                │
-                    │  + 微信 Channel               │
- Cron 触发           │                              │
-────────────▶       └──────────┬───────────────────┘
+                    ┌──────────────────────────────────────┐
+                    │            main.go                    │
+                    │  三个独立 Agent 实例                   │
+                    │                                      │
+ 用户输入 (stdin)    │  ag (REPL)          MaxTurns 100     │
+────────────▶       │  weixinAgent         MaxTurns  20     │
+                    │  cronAgent           MaxTurns  10     │
+ 微信消息            │                                      │
+────────────▶       │  + Cron 调度器                        │
+                    │  + Gateway 统一路由                    │
+ Cron 触发           │  + Skill Manager → 注入 system prompt│
+────────────▶       │  + Memory Manager → Prefetch/SyncTurn│
+                    │  + Session Store (SQLite)             │
+                    │  + Dispatcher (子代理池)               │
+                    └──────────┬───────────────────────────┘
                                │
                                │ Submit(prompt)
                                ▼
@@ -76,14 +93,16 @@ gclaw/
               ▼             │            ▼
     ┌──────────────┐        │   ┌─────────────────┐
     │ tool.Registry│        │   │ DeepSeek/GLM/   │
-    │ ├ ReadFile   │        │   │ Claude/Ollama   │
-    │ ├ WriteFile  │        │   └─────────────────┘
-    │ ├ Bash       │        │
-    │ ├ Glob       │        │
-    │ └ Grep       │        │
+    │ (自注册)      │        │   │ Claude/Ollama   │
+    │ ├ shell/*    │        │   └─────────────────┘
+    │ ├ read/*     │        │
+    │ ├ write/*    │        │
+    │ ├ search/*   │        │
+    │ ├ meta/*     │        │
+    │ └ ...        │        │
     └──────────────┘        │
                             │
-  Cron 结果 ──▶ OnResult ──▶ weixinCh.Send() ──▶ 微信推送
+  Cron 结果 ──▶ OnResult ──▶ weixinCh.Send(context_token) ──▶ 微信推送
 ```
 
 ### 1. Agent 循环 (`internal/agent/agent.go`)
@@ -100,6 +119,7 @@ Agent 是核心执行引擎，循环执行以下步骤：
 - `Run(ctx, prompt)` — 非流式执行
 - `RunStreaming(ctx, prompt, onText)` — 流式执行（逐 token 回调）
 - `Submit(ctx, message)` — 并发安全的提交（用于自主模式）
+- `Reset()` — 清空消息历史，系统提示词保留
 
 ### 2. 模型层 (`internal/model/`)
 
@@ -143,30 +163,172 @@ type Model interface {
 ```go
 type Tool interface {
     Name() string
+    Toolset() string              // 工具集分组
     Description() string
-    InputSchema() Schema      // JSON Schema 参数定义
-    ConcurrencySafe() bool    // 是否并发安全
+    InputSchema() Schema          // JSON Schema 参数定义
+    Check() bool                  // 可用性检测（false 则不暴露给模型）
+    ConcurrencySafe() bool        // 是否并发安全
     RequiresApproval(params) bool // 是否需要权限确认
     Execute(ctx, params) (ToolResult, error)
 }
 ```
 
-#### 内置工具
+#### 自注册模式
 
-| 工具 | 用途 | 需要审批 |
-|------|------|---------|
-| `ReadFile` | 读取文件内容 | 否 |
-| `WriteFile` | 创建/覆写文件 | 是 |
-| `Bash` | 执行 Shell 命令 | 部分（安全命令自动通过） |
-| `Glob` | 文件名模式匹配 | 否 |
-| `Grep` | 正则搜索文件内容 | 否 |
-| `SleepTool` | 自主模式休眠 | 否 |
+工具通过 `init()` 函数自注册到全局 Registry：
 
-#### Bash 安全命令白名单
+```go
+// internal/tool/builtin/shell/tool.go
+func init() {
+    tool.GlobalRegistry.Register(&BashTool{})
+}
+```
 
-`git status`, `git diff`, `git log`, `ls`, `cat`, `echo`, `pwd`, `whoami`, `which` 自动放行，其余需要审批。
+`main.go` 通过 blank import 触发注册：
 
-### 4. 权限系统 (`internal/perm/perm.go`)
+```go
+import (
+    _ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
+    _ "github.com/openclaw/gclaw/internal/tool/builtin/file_read"
+    // ...
+)
+```
+
+#### 工具集分组
+
+| 工具集 | 工具 | 用途 |
+|--------|------|------|
+| `shell` | Bash | 执行 Shell 命令（需审批） |
+| `read` | ReadFile | 读取文件内容 |
+| `write` | WriteFile | 创建/覆写文件（需审批） |
+| `search` | Glob, Grep | 文件搜索 |
+| `time` | SleepTool | 自主模式休眠（需 Sleeper） |
+| `meta` | delegate_task, cron_list, cron_run, weixin_status, tasks_list | 元工具 |
+| `skill` | skill_list, skill_create, skill_delete | Skill 管理 |
+
+`Check()` 方法控制工具是否暴露：例如 SleepTool 仅在自主模式下有 Sleeper 时返回 true。
+
+#### Registry 方法
+
+```go
+tool.GlobalRegistry.AvailableTools()   // 只返回 Check()==true 的工具
+tool.GlobalRegistry.ListByToolset("meta")  // 按工具集筛选
+tool.GlobalRegistry.Toolsets()         // 列出所有工具集
+```
+
+### 4. Skill 系统 (`internal/skill/`)
+
+Skill 是可复用的程序性知识单元，以 YAML frontmatter + Markdown 格式存储：
+
+```
+~/.gclaw/skills/
+├── user/                  # 用户手写（优先）
+│   └── github-trending/
+│       └── SKILL.md
+└── agent/                 # Agent 自创建
+    └── some-skill/
+        └── SKILL.md
+```
+
+#### SKILL.md 格式
+
+```markdown
+---
+name: my-skill
+description: 技能描述
+---
+
+## 指令
+
+当用户要求...时，执行以下操作：
+...
+```
+
+#### 注入机制
+
+`Manager.LoadAll()` 扫描目录 → 解析 frontmatter → `ForSystemPrompt()` 拼装注入 Agent 的 system prompt。
+
+注入范围：
+- 主 REPL Agent（`ag`）
+- Cron Agent（`cronAgent`）
+
+Agent 可通过 `skill_create`/`skill_delete`/`skill_list` 工具动态管理 skills。
+
+### 5. 记忆系统 (`internal/memory/`)
+
+#### Provider 接口
+
+```go
+type Provider interface {
+    Available() bool
+    Initialize(sessionID string) error
+    Prefetch(ctx, query) (string, error)      // 搜索相关记忆
+    SyncTurn(ctx, userMsg, assistantMsg) error // 写入记忆
+    SystemPromptBlock() string
+    Shutdown() error
+}
+```
+
+#### 数据流
+
+```
+用户消息 → Prefetch(消息) → 搜索 memory → 注入 system prompt
+         → LLM 处理
+         → SyncTurn(用户消息, 助手回复) → 写 memory
+```
+
+#### File Provider
+
+本地文件实现，复用 Claude Code memory 格式（`MEMORY.md` 索引 + 独立 `.md`），存储于 `~/.gclaw/memory/`。
+
+`Manager` 支持多 Provider fan-out，单个失败不影响其他。
+
+### 6. 会话持久化 (`internal/session/`)
+
+基于 `modernc.org/sqlite`（纯 Go，无 CGO）的 SQLite + FTS5 全文搜索：
+
+```sql
+CREATE TABLE sessions (id TEXT PRIMARY KEY, agent_type TEXT, ...);
+CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, content TEXT, ...);
+CREATE VIRTUAL TABLE messages_fts USING fts5(content, content='messages');
+```
+
+`Store` 接口支持 `Search(query, limit)` 全文搜索历史对话。
+
+### 7. Gateway (`internal/gateway/`)
+
+统一路由层，抽象平台差异：
+
+```go
+type SessionSource struct {
+    Platform string // "repl" | "weixin" | ...
+    ChatID   string
+    ChatName string
+    UserID   string
+    ThreadID string
+}
+```
+
+目前接入 REPL 和微信两个平台，接口预留扩展。
+
+### 8. 子代理委派 (`internal/delegate/`)
+
+`Dispatcher` 管理子代理 goroutine 池：
+
+```go
+type Dispatcher struct {
+    factory      AgentFactory       // 创建子代理
+    sem          chan struct{}       // 并发信号量
+    maxDepth     int                // 最大嵌套深度（默认2）
+    blockedTools map[string]bool    // 子代理禁用工具
+}
+```
+
+- `delegate_task` 元工具让主 Agent 能委派子任务
+- 子代理禁用 `delegate_task`（防止递归）
+- `AgentRunner` 接口：`Run(ctx, prompt) (string, error)` + `Reset()`
+
+### 9. 权限系统 (`internal/perm/perm.go`)
 
 采用洋葱模型，4 种模式：
 
@@ -182,7 +344,7 @@ type Tool interface {
 - `Bash(rm -rf *)` — 禁止危险删除
 - `**` — 匹配所有工具
 
-### 5. 自主模式 (`internal/autonomous/`)
+### 10. 自主模式 (`internal/autonomous/`)
 
 三种运行级别：
 
@@ -200,21 +362,21 @@ type Tool interface {
 
 事件类型：`tick`（心跳）、`file`（文件变更）、`webhook`（外部回调）、`cron`（定时任务）、`user`（用户输入）、`wake`（休眠唤醒）
 
-### 6. 上下文管理 (`internal/context/manager.go`)
+### 11. 上下文管理 (`internal/context/manager.go`)
 
 - Token 估算：基于字符数 / 4 的粗略估算
 - 压缩触发：当 token 使用率达到 `compact_at` 阈值时触发
 - 压缩策略：保留第一条消息（上下文锚点）和最近 N 条消息，中间替换为标记
 
-### 7. 任务管理 (`internal/task/`)
+### 12. 任务管理 (`internal/task/`)
 
 异步后台任务系统：
 - 任务类型：`local_bash`、`local_agent`、`remote_agent`、`cron_task`、`monitor_task`
-- 声明周期：`pending` → `running` → `completed` / `failed` / `killed`
+- 生命周期：`pending` → `running` → `completed` / `failed` / `killed`
 - 并发控制：信号量限制最大并发数
 - 依赖管理：任务 DAG（blockedBy / blocks）
 
-### 10. 配置系统 (`internal/config/config.go`)
+### 13. 配置系统 (`internal/config/config.go`)
 
 配置优先级（从低到高）：`默认值` → `用户配置` → `项目配置` → `环境变量`
 
@@ -223,9 +385,15 @@ type Tool interface {
 - `agent` — 自主级别、心跳间隔、最大轮数
 - `context` — Token 窗口、压缩阈值
 - `permission` — 权限模式、规则列表
-- `channels` — 微信通道（enabled, verbose）
-- `cron` — 定时任务（全局开关、模型、任务列表含 notify_weixin）
-- `plugins` — MCP 服务器、启用列表
+- `tools` — 禁用工具/工具集
+- `skills` — Skill 文件系统
+- `memory` — 记忆 Provider
+- `session` — SQLite 会话持久化
+- `gateway` — 统一路由层
+- `delegate` — 子代理委派
+- `channels` — 微信通道
+- `cron` — 定时任务
+- `plugins` — MCP 服务器
 - `logging` — 日志级别、审计、OTEL
 
 配置发现：
@@ -233,9 +401,11 @@ type Tool interface {
 - 用户配置：`~/.gclaw/config.yaml`
 - 环境变量：`GCLAW_MODEL`、`GCLAW_AUTONOMY`、`GCLAW_PERMISSION_MODE`、`GCLAW_LOG_LEVEL`
 
+`merge()` 函数负责合并所有配置段（包括 Skills、Memory、Session、Gateway、Delegate）。
+
 支持 `${ENV_VAR}` 语法在 YAML 中引用环境变量。
 
-### 8. 消息通道 (`internal/channel/`)
+### 14. 消息通道 (`internal/channel/`)
 
 `Channel` 接口定义了消息通道的统一抽象：
 
@@ -255,13 +425,15 @@ type Channel interface {
 
 - **扫码登录**：`/ilink/bot/get_bot_qrcode` → 轮询确认 → 保存 token
 - **长轮询收消息**：`POST /cgi-bin/bot/get_updates`，30s 超时，收到后立即发起下一次
-- **发消息**：`POST /cgi-bin/bot/send_message`，需 `from_user_id: ""` + `client_id`（UUID）两字段
-- **ChatUserID 持久化**：最后发消息的用户 ID 写入 `AccountData.ChatUserID`，重启后恢复，供 cron 推送使用
+- **发消息**：`POST /cgi-bin/bot/send_message`，需 `from_user_id: ""` + `client_id`（UUID）
+- **context_token 复用**：存储最后一次用户消息的 context_token，主动推送时复用（空 token API 返回 `ret:-2`）
+- **错误码检查**：解析响应 JSON 的 `ret` 字段，`ret != 0` 时返回 error
+- **ChatUserID 持久化**：最后发消息的用户 ID 写入 `AccountData.ChatUserID`，重启后恢复
 - **独立 Agent**：持有专属 `weixinAgent` 实例，与 REPL 互不阻塞
 
 消息处理流程：`收消息 → agent.Submit() → Agent 循环 → 回复 → OnMessageHandled 回调`
 
-### 9. 定时任务 (`internal/cron/`)
+### 15. 定时任务 (`internal/cron/`)
 
 Cron 调度器每秒检查一次，到点触发 Job：
 
@@ -289,6 +461,10 @@ type Executor interface {
 4. `executor.Submit(ctx, prompt)` 执行
 5. 执行完毕后调用 `Job.OnResult`（如微信推送）
 
+`RunNow()` 方法供 `cron_run` 元工具调用，立即执行指定 Job。
+
+Cron Agent 的 system prompt 包含所有 skill 指令，prompt 可直接引用 skill。
+
 Cron Agent 可配置独立模型（`cron.model`），不占用主对话的消息历史。
 
 ## 关键设计决策
@@ -296,9 +472,11 @@ Cron Agent 可配置独立模型（`cron.model`），不占用主对话的消息
 1. **多 Agent 实例隔离** — REPL、微信、Cron 各用独立 Agent 实例，互不阻塞，消息历史隔离
 2. **Cron 模型独立** — 通过 `cron.model` 可为定时任务指定轻量模型（如 `deepseek-v4-flash`），降低 API 成本
 3. **Agent.Reset()** — Cron 执行前清空消息历史，避免多轮累积导致的 token 爆炸和上下文污染
-
-4. **OpenAI 兼容适配** — DeepSeek、GLM 等国内模型通过统一 `openai-compatible` 类型接入，降低维护成本
-5. **reasoning_content 透传** — DeepSeek V4 的推理内容需原样回传，Message 结构中专门保留了 `ReasoningContent` 字段
-6. **双模式 Agent** — 同一 Agent 实例支持 interactive 和 autonomous 两种模式，通过 `Submit()` 的并发锁保护
-7. **Mock 优先的开发流程** — 所有提供者工厂默认注册 Mock，确保无 API Key 时也能本地开发测试
-8. **Shell 自适应** — Bash 工具自动检测可用 Shell（powershell > sh > bash > cmd），并转换 UTF-16 输出
+4. **工具自注册** — 通过 `init()` + blank import 实现工具自注册，添加新工具无需改 main.go
+5. **Skill 注入 Cron** — Cron Agent 的 system prompt 包含所有 skill，prompt 可直接引用 skill 指令
+6. **context_token 复用** — 微信主动推送需要有效 context_token，从最近用户消息中获取并复用
+7. **OpenAI 兼容适配** — DeepSeek、GLM 等国内模型通过统一 `openai-compatible` 类型接入，降低维护成本
+8. **reasoning_content 透传** — DeepSeek V4 的推理内容需原样回传，Message 结构中专门保留了 `ReasoningContent` 字段
+9. **双模式 Agent** — 同一 Agent 实例支持 interactive 和 autonomous 两种模式，通过 `Submit()` 的并发锁保护
+10. **纯 Go SQLite** — 使用 `modernc.org/sqlite`，无 CGO 依赖，Windows 交叉编译零配置
+11. **Shell 自适应** — Bash 工具自动检测可用 Shell（powershell > sh > bash > cmd），并转换 UTF-16 输出

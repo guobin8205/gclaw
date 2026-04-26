@@ -86,7 +86,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 		response, err := a.cfg.Model.Call(ctx, model.CallParams{
 			SystemPrompt: a.cfg.SystemPrompt,
 			Messages:     a.messages,
-			Tools:        a.cfg.Tools.List(),
+			Tools:        a.cfg.Tools.AvailableTools(),
 			MaxTokens:    8192,
 		})
 		if err != nil {
@@ -147,7 +147,7 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 		events, err := a.cfg.Model.Stream(ctx, model.StreamParams{
 			SystemPrompt: a.cfg.SystemPrompt,
 			Messages:     a.messages,
-			Tools:        a.cfg.Tools.List(),
+			Tools:        a.cfg.Tools.AvailableTools(),
 			MaxTokens:    8192,
 		})
 		if err != nil {

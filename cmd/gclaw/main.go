@@ -15,12 +15,26 @@ import (
 	"github.com/openclaw/gclaw/internal/config"
 	"github.com/openclaw/gclaw/internal/context"
 	"github.com/openclaw/gclaw/internal/cron"
+	"github.com/openclaw/gclaw/internal/delegate"
+	"github.com/openclaw/gclaw/internal/gateway"
+	gw_adapter "github.com/openclaw/gclaw/internal/gateway/adapter"
+	"github.com/openclaw/gclaw/internal/memory"
 	"github.com/openclaw/gclaw/internal/model"
+	"github.com/openclaw/gclaw/internal/session"
 	"github.com/openclaw/gclaw/internal/perm"
 	"github.com/openclaw/gclaw/internal/provider"
+	"github.com/openclaw/gclaw/internal/skill"
 	"github.com/openclaw/gclaw/internal/task"
 	"github.com/openclaw/gclaw/internal/tool"
-	"github.com/openclaw/gclaw/internal/tool/builtin"
+	timetool "github.com/openclaw/gclaw/internal/tool/builtin/timetool"
+
+	// Blank imports trigger tool self-registration via init().
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/file_read"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/file_write"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/search"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
+	"github.com/openclaw/gclaw/internal/tool/builtin/skill_tools"
+	"github.com/openclaw/gclaw/internal/tool/builtin/meta"
 )
 
 // Version is set at build time.
@@ -115,24 +129,94 @@ func runREPL() {
 
 	// Initialize components
 	autonomyLevel := parseAutonomy(cfg.Agent.Autonomy)
-	toolRegistry := setupTools()
+	toolRegistry := tool.GlobalRegistry
 	providerFactory := setupProviders(cfg)
 	modelProvider := resolveModel(providerFactory, cfg)
 	permChecker := setupPermissions(cfg)
 	ctxManager := setupContext(cfg)
 	taskMgr := task.NewManager(10)
 
+	// Initialize skill system
+	var skillMgr *skill.Manager
+	if cfg.Skills.Enabled {
+		skillMgr = skill.NewManager()
+		skillDir := cfg.Skills.Dir
+		if skillDir == "" {
+			skillDir = config.ExpandPath("~/.gclaw/skills")
+		}
+		if err := skillMgr.LoadAll(skillDir); err != nil {
+			slog.Warn("skill: failed to load skills", "error", err)
+		} else {
+			slog.Info("skill: loaded", "count", len(skillMgr.List()))
+		}
+		skill_tools.ManagerRef = skillMgr
+	}
+
+	// Initialize memory system
+	var memoryMgr *memory.Manager
+	if cfg.Memory.Enabled {
+		memDir := cfg.Memory.Dir
+		if memDir == "" {
+			memDir = config.ExpandPath("~/.gclaw/memory")
+		}
+		fp := memory.NewFileProvider(memDir)
+		memoryMgr = memory.NewManager(fp)
+		if err := memoryMgr.Initialize("default"); err != nil {
+			slog.Warn("memory: failed to initialize", "error", err)
+		}
+	}
+
+	systemPrompt := defaultSystemPrompt() + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy))
+	if skillMgr != nil {
+		systemPrompt += skillMgr.ForSystemPrompt()
+	}
+	if memoryMgr != nil {
+		systemPrompt += memoryMgr.SystemPromptBlock()
+	}
+
+	// Initialize session store
+	var currentSessionID string
+	var sessionStore session.Store
+	if cfg.Session.Enabled {
+		dbPath := cfg.Session.DBPath
+		if dbPath == "" {
+			dbPath = config.ExpandPath("~/.gclaw/sessions.db")
+		}
+		maxSessions := cfg.Session.MaxSessions
+		if maxSessions <= 0 {
+			maxSessions = 100
+		}
+		store, err := session.NewStore(dbPath, maxSessions)
+		if err != nil {
+			slog.Warn("session: failed to open store", "error", err)
+		} else {
+			sessionStore = store
+			currentSessionID, _ = store.CreateSession("repl")
+			defer store.Close()
+		}
+	}
+
 	// Configure main REPL agent
 	ag := agent.New(agent.Config{
 		Model:        modelProvider,
 		Tools:        toolRegistry,
-		SystemPrompt: defaultSystemPrompt() + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy)),
+		SystemPrompt: systemPrompt,
 		MaxTurns:     100,
 		Autonomy:     autonomyLevel,
 		Permissions:  permChecker,
 	})
 
 	fmt.Printf("gclaw %s — %s mode | %s | type /help\n\n", Version, cfg.Agent.Autonomy, cfg.Model.Default)
+
+	// Setup gateway
+	var gw *gateway.Gateway
+	if cfg.Gateway.Enabled {
+		gw = gateway.New(nil)
+		// REPL is always a platform
+		if cfg.Gateway.Platforms["repl"].Enabled || len(cfg.Gateway.Platforms) == 0 {
+			gw.Register("repl", gw_adapter.NewREPL())
+		}
+	}
 
 	// Setup weixin channel
 	var weixinCh *weixin.Channel
@@ -161,6 +245,10 @@ func runREPL() {
 			if weixinCh.HasStoredAccount() {
 				fmt.Println(" 发现已绑定账号")
 			}
+			if gw != nil {
+				gw.Register("weixin", weixinCh)
+				slog.Info("gateway: weixin platform registered")
+			}
 			go func() {
 				bus := autonomous.NewEventBus()
 				if err := weixinCh.Start(stdctx.Background(), bus); err != nil {
@@ -182,10 +270,14 @@ func runREPL() {
 				slog.Warn("cron: model not found, using default", "model", cfg.Cron.Model, "error", err)
 			}
 		}
+		cronSystemPrompt := defaultSystemPrompt()
+		if skillMgr != nil {
+			cronSystemPrompt += skillMgr.ForSystemPrompt()
+		}
 		cronAgent := agent.New(agent.Config{
 			Model:        cronModel,
 			Tools:        toolRegistry,
-			SystemPrompt: defaultSystemPrompt(),
+			SystemPrompt: cronSystemPrompt,
 			MaxTurns:     10,
 			Autonomy:     agent.Interactive,
 			Permissions:  permChecker,
@@ -237,6 +329,32 @@ func runREPL() {
 		fmt.Printf("Cron scheduler active: %d jobs loaded.\n", len(cfg.Cron.Jobs))
 	}
 
+	// Setup delegate dispatcher and meta tool references
+	if cfg.Delegate.Enabled {
+		factory := func() delegate.AgentRunner {
+			return agent.New(agent.Config{
+				Model:        modelProvider,
+				Tools:        toolRegistry,
+				SystemPrompt: defaultSystemPrompt(),
+				MaxTurns:     10,
+				Autonomy:     agent.Interactive,
+				Permissions:  permChecker,
+			})
+		}
+		dispatcher := delegate.NewDispatcher(
+			factory,
+			cfg.Delegate.MaxConcurrent,
+			cfg.Delegate.MaxDepth,
+		)
+		meta.DispatcherRef = dispatcher
+	}
+
+	meta.CronSchedRef = cronSched
+	if weixinCh != nil {
+		meta.WeixinChRef = weixinCh
+	}
+	meta.TaskMgrRef = taskMgr
+
 	// Setup autonomous scheduler for semi/full modes
 	var scheduler *autonomous.Scheduler
 	if autonomyLevel >= agent.SemiAutonomous {
@@ -249,8 +367,8 @@ func runREPL() {
 			idleSleep = 5 * time.Minute
 		}
 
-		sleepTool := &builtin.Sleep{}
-		toolRegistry.Register(sleepTool)
+		sleepTool, _ := toolRegistry.Get("SleepTool")
+		sleepToolInstance := sleepTool.(*timetool.SleepTool)
 
 		scheduler = autonomous.NewScheduler(autonomous.Config{
 			Level:        autonomous.ParseLevel(cfg.Agent.Autonomy),
@@ -259,7 +377,7 @@ func runREPL() {
 		}, ag)
 
 		// Wire up the sleeper to SleepTool
-		sleepTool.Sleeper = scheduler.Sleeper()
+		sleepToolInstance.Sleeper = scheduler.Sleeper()
 
 		scheduler.Start()
 		defer scheduler.Stop()
@@ -300,10 +418,27 @@ func runREPL() {
 
 		// Interactive mode: run agent loop directly
 		slog.Debug("running agent", "input", input)
-		response, err := ag.Run(stdctx.Background(), input)
+
+		agentInput := input
+		if memoryMgr != nil {
+			if ctx := memoryMgr.Prefetch(stdctx.Background(), input, cfg.Memory.PrefetchLimit); ctx != "" {
+				agentInput = ctx + "\n\nUser message: " + input
+			}
+		}
+
+		response, err := ag.Run(stdctx.Background(), agentInput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
 			continue
+		}
+
+		if memoryMgr != nil {
+			memoryMgr.SyncTurn(stdctx.Background(), input, response)
+		}
+
+		if sessionStore != nil {
+			_ = sessionStore.AddMessage(currentSessionID, "user", input, "", "", "")
+			_ = sessionStore.AddMessage(currentSessionID, "assistant", response, "", "", "")
 		}
 
 		fmt.Println()
@@ -432,16 +567,6 @@ func handleWeixinCommand(cmd string, ch *weixin.Channel) {
 	default:
 		fmt.Println("Usage: /weixin login|logout|status")
 	}
-}
-
-func setupTools() *tool.Registry {
-	r := tool.NewRegistry()
-	r.Register(&builtin.ReadFile{})
-	r.Register(&builtin.WriteFile{})
-	r.Register(&builtin.Bash{})
-	r.Register(&builtin.Glob{})
-	r.Register(&builtin.Grep{})
-	return r
 }
 
 func setupProviders(cfg *config.Config) *provider.Factory {
