@@ -1,0 +1,607 @@
+package main
+
+import (
+	"bufio"
+	stdctx "context"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/openclaw/gclaw/internal/agent"
+	"github.com/openclaw/gclaw/internal/autonomous"
+	"github.com/openclaw/gclaw/internal/channel/weixin"
+	"github.com/openclaw/gclaw/internal/config"
+	"github.com/openclaw/gclaw/internal/context"
+	"github.com/openclaw/gclaw/internal/cron"
+	"github.com/openclaw/gclaw/internal/model"
+	"github.com/openclaw/gclaw/internal/perm"
+	"github.com/openclaw/gclaw/internal/provider"
+	"github.com/openclaw/gclaw/internal/task"
+	"github.com/openclaw/gclaw/internal/tool"
+	"github.com/openclaw/gclaw/internal/tool/builtin"
+)
+
+// Version is set at build time.
+var Version = "dev"
+
+func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "--version", "-v":
+			fmt.Printf("gclaw version %s\n", Version)
+			return
+		case "help", "--help", "-h":
+			printHelp()
+			return
+		case "config":
+			runConfig(os.Args[2:])
+			return
+		case "executor":
+			// Reserved for remote bridge mode
+			fmt.Println("executor mode not yet implemented")
+			return
+		}
+	}
+
+	runREPL()
+}
+
+func printHelp() {
+	fmt.Println(`gclaw - High-performance autonomous agent
+
+Usage:
+  gclaw [command]
+
+Commands:
+  (no args)     Start interactive REPL mode
+  config dump   Dump current config (with redaction)
+  config path   Show config file paths
+  executor      Start in remote executor mode (bridge)
+  version       Show version
+  help          Show this help
+
+Configuration files:
+  Project: .gclaw/config.yaml (auto-discovered by walking up)
+  User:    ~/.gclaw/config.yaml
+
+Environment variables:
+  GCLAW_MODEL             Override default model
+  GCLAW_AUTONOMY          Override autonomy level
+  GCLAW_PERMISSION_MODE   Override permission mode
+  GCLAW_LOG_LEVEL         Override log level`)
+}
+
+func runConfig(args []string) {
+	userPath, _ := config.UserConfigPath()
+	cwd, _ := os.Getwd()
+	projectPath := config.FindProjectConfig(cwd)
+
+	switch {
+	case len(args) > 0 && args[0] == "path":
+		fmt.Println("Project config:", projectPath)
+		fmt.Println("User config:", userPath)
+	case len(args) > 0 && args[0] == "dump":
+		fmt.Println("Config paths:")
+		fmt.Println("  Project:", projectPath)
+		fmt.Println("  User:", userPath)
+		fmt.Println("\nLoading config...")
+		cfg, err := config.Load(projectPath, userPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.Model.Providers = config.MaskKeys(cfg.Model.Providers)
+		fmt.Printf("\n%+#v\n", cfg)
+	default:
+		fmt.Println("Usage: gclaw config [dump|path]")
+	}
+}
+
+func runREPL() {
+	cwd, _ := os.Getwd()
+	userPath, _ := config.UserConfigPath()
+	projectPath := config.FindProjectConfig(cwd)
+
+	cfg, err := config.Load(projectPath, userPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		os.Exit(1)
+	}
+
+	setupLogging(cfg.Logging.Level)
+	slog.Info("gclaw starting", "version", Version, "autonomy", cfg.Agent.Autonomy)
+
+	// Initialize components
+	autonomyLevel := parseAutonomy(cfg.Agent.Autonomy)
+	toolRegistry := setupTools()
+	providerFactory := setupProviders(cfg)
+	modelProvider := resolveModel(providerFactory, cfg)
+	permChecker := setupPermissions(cfg)
+	ctxManager := setupContext(cfg)
+	taskMgr := task.NewManager(10)
+
+	// Configure main REPL agent
+	ag := agent.New(agent.Config{
+		Model:        modelProvider,
+		Tools:        toolRegistry,
+		SystemPrompt: defaultSystemPrompt() + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy)),
+		MaxTurns:     100,
+		Autonomy:     autonomyLevel,
+		Permissions:  permChecker,
+	})
+
+	fmt.Printf("gclaw %s — %s mode | %s | type /help\n\n", Version, cfg.Agent.Autonomy, cfg.Model.Default)
+
+	// Setup weixin channel
+	var weixinCh *weixin.Channel
+	if cfg.Channels.Weixin.Enabled {
+		fmt.Print("正在初始化微信通道...")
+		var err error
+		weixinCh, err = weixin.New(weixin.Config{
+			Verbose: cfg.Channels.Weixin.Verbose,
+			OnMessageHandled: func() {
+				fmt.Print("> ")
+			},
+		})
+		if err != nil {
+			fmt.Printf(" 失败: %v\n", err)
+		} else {
+			// Separate agent instance for WeChat with its own conversation history.
+			weixinAgent := agent.New(agent.Config{
+				Model:        modelProvider,
+				Tools:        toolRegistry,
+				SystemPrompt: defaultSystemPrompt(),
+				MaxTurns:     20,
+				Autonomy:     agent.Interactive,
+				Permissions:  permChecker,
+			})
+			weixinCh.SetAgent(weixinAgent)
+			if weixinCh.HasStoredAccount() {
+				fmt.Println(" 发现已绑定账号")
+			}
+			go func() {
+				bus := autonomous.NewEventBus()
+				if err := weixinCh.Start(stdctx.Background(), bus); err != nil {
+					fmt.Fprintf(os.Stderr, "\n微信通道启动失败: %v\n", err)
+				}
+			}()
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	// Setup cron scheduler
+	var cronSched *cron.Scheduler
+	if cfg.Cron.Enabled && len(cfg.Cron.Jobs) > 0 {
+		cronModel := modelProvider
+		if cfg.Cron.Model != "" {
+			if m, err := providerFactory.Build(cfg.Cron.Model); err == nil {
+				cronModel = m
+			} else {
+				slog.Warn("cron: model not found, using default", "model", cfg.Cron.Model, "error", err)
+			}
+		}
+		cronAgent := agent.New(agent.Config{
+			Model:        cronModel,
+			Tools:        toolRegistry,
+			SystemPrompt: defaultSystemPrompt(),
+			MaxTurns:     10,
+			Autonomy:     agent.Interactive,
+			Permissions:  permChecker,
+		})
+		cronSched = cron.NewScheduler(cronAgent)
+
+		for _, j := range cfg.Cron.Jobs {
+			job := &cron.Job{
+				Name:         j.Name,
+				Schedule:     j.Schedule,
+				Prompt:       j.Prompt,
+				Enabled:      j.Enabled,
+				NotifyWeixin: j.NotifyWeixin,
+			}
+
+			// Wire WeChat notification if configured.
+			if j.NotifyWeixin {
+				job.OnResult = func(name, prompt, response string) {
+					if weixinCh == nil {
+						slog.Warn("cron: OnResult skipped, weixin not enabled")
+						return
+					}
+					if !weixinCh.IsConnected() {
+						slog.Warn("cron: OnResult skipped, weixin not connected")
+						return
+					}
+					to := weixinCh.LastUserID()
+					if to == "" {
+						slog.Warn("cron: OnResult skipped, no WeChat user (send a message in WeChat first)")
+						return
+					}
+					slog.Info("cron: pushing result to WeChat", "job", name, "to", to, "len", len(response))
+					msg := fmt.Sprintf("[定时任务 %s]\n%s", name, response)
+					if err := weixinCh.Send(stdctx.Background(), to, msg); err != nil {
+						slog.Warn("cron: push to weixin failed", "error", err)
+					} else {
+						slog.Info("cron: pushed to WeChat successfully")
+					}
+				}
+			}
+
+			if err := cronSched.AddJob(job); err != nil {
+				slog.Error("failed to add cron job", "name", j.Name, "error", err)
+				continue
+			}
+		}
+		cronSched.Start()
+		defer cronSched.Stop()
+		fmt.Printf("Cron scheduler active: %d jobs loaded.\n", len(cfg.Cron.Jobs))
+	}
+
+	// Setup autonomous scheduler for semi/full modes
+	var scheduler *autonomous.Scheduler
+	if autonomyLevel >= agent.SemiAutonomous {
+		tickInterval, err := config.Duration(cfg.Agent.TickInterval)
+		if err != nil {
+			tickInterval = 30 * time.Second
+		}
+		idleSleep, err := config.Duration(cfg.Agent.IdleSleep)
+		if err != nil {
+			idleSleep = 5 * time.Minute
+		}
+
+		sleepTool := &builtin.Sleep{}
+		toolRegistry.Register(sleepTool)
+
+		scheduler = autonomous.NewScheduler(autonomous.Config{
+			Level:        autonomous.ParseLevel(cfg.Agent.Autonomy),
+			TickInterval: tickInterval,
+			IdleSleep:    idleSleep,
+		}, ag)
+
+		// Wire up the sleeper to SleepTool
+		sleepTool.Sleeper = scheduler.Sleeper()
+
+		scheduler.Start()
+		defer scheduler.Stop()
+		fmt.Println("Autonomous mode active. The agent will work independently.")
+		fmt.Println("Enter messages to send to the agent, or /help for commands.")
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for {
+		fmt.Print("> ")
+		if !scanner.Scan() {
+			break
+		}
+
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+
+		// Handle slash commands
+		if strings.HasPrefix(input, "/") {
+			handleCommand(input, cfg, ctxManager, taskMgr, ag, scheduler, cronSched, weixinCh)
+			continue
+		}
+
+		// In autonomous mode, publish user input as event
+		if scheduler != nil {
+			scheduler.Publish(autonomous.Event{
+				Type:    autonomous.EventUser,
+				Source:  "cli",
+				Payload: input,
+				Time:    time.Now(),
+			})
+			fmt.Println("(message sent to autonomous agent)")
+			continue
+		}
+
+		// Interactive mode: run agent loop directly
+		slog.Debug("running agent", "input", input)
+		response, err := ag.Run(stdctx.Background(), input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+			continue
+		}
+
+		fmt.Println()
+		fmt.Println(response)
+		fmt.Println()
+	}
+}
+
+func handleCommand(cmd string, cfg *config.Config, ctxMgr *context.Manager, taskMgr *task.Manager, ag *agent.Agent, scheduler *autonomous.Scheduler, cronSched *cron.Scheduler, weixinCh *weixin.Channel) {
+	switch {
+	case cmd == "/help":
+		fmt.Println(`
+Commands:
+  /help        Show this help
+  /stats       Show context and usage stats
+  /autonomy    Show autonomous scheduler stats
+  /cron        Show cron job status
+  /weixin      WeChat channel: login|logout|status
+  /tasks       List running tasks
+  /config      Show current config
+  /compact     Force context compaction
+  /clear       Clear conversation
+  /exit        Exit gclaw`)
+	case cmd == "/stats":
+		fmt.Println("\n--- Context Stats ---")
+		fmt.Println(ctxMgr.UsageStats())
+		fmt.Println("--- Model Stats ---")
+		fmt.Printf("Input tokens: %d\n", ag.Usage().InputTokens)
+		fmt.Printf("Output tokens: %d\n", ag.Usage().OutputTokens)
+	case cmd == "/cron":
+		if cronSched != nil {
+			jobs := cronSched.Jobs()
+			fmt.Printf("\n--- Cron Jobs (%d) ---\n", len(jobs))
+			for _, j := range jobs {
+				fmt.Printf("  %s:\n", j.Name)
+				fmt.Printf("    schedule: %s\n", j.Schedule)
+				fmt.Printf("    next_run: %s\n", j.NextRun.Format("15:04:05"))
+				fmt.Printf("    run_count: %d\n", j.RunCount)
+				fmt.Printf("    notify_weixin: %v\n", j.NotifyWeixin)
+			}
+		} else {
+			fmt.Println("Cron scheduler is not active (add cron.jobs in config)")
+		}
+	case strings.HasPrefix(cmd, "/weixin"):
+		if weixinCh == nil {
+			fmt.Println("微信通道未启用 (设置 channels.weixin.enabled: true)")
+		} else {
+			handleWeixinCommand(cmd, weixinCh)
+		}
+	case cmd == "/autonomy":
+		if scheduler != nil {
+			stats := scheduler.Stats()
+			fmt.Println("\n--- Autonomous Scheduler ---")
+			for k, v := range stats {
+				fmt.Printf("%s: %v\n", k, v)
+			}
+		} else {
+			fmt.Println("Autonomous mode is not active (set agent.autonomy: semi or full in config)")
+		}
+	case cmd == "/tasks":
+		tasks := taskMgr.List()
+		fmt.Printf("\n%d tasks:\n", len(tasks))
+		for _, t := range tasks {
+			fmt.Printf("  [%s] %s %s\n", t.Status, t.Type, t.Description)
+		}
+	case cmd == "/compact":
+		ctxMgr.Compact(10)
+		fmt.Println("Context compacted.")
+	case cmd == "/config":
+		fmt.Println("\n--- Config ---")
+		fmt.Printf("Model: %s\n", cfg.Model.Default)
+		fmt.Printf("Fallback: %v\n", cfg.Model.Fallback)
+		fmt.Printf("Autonomy: %s\n", cfg.Agent.Autonomy)
+		fmt.Printf("Max turns: %d\n", cfg.Agent.MaxTurns)
+		fmt.Printf("Permission: %s\n", cfg.Permission.Mode)
+	case cmd == "/clear":
+		ctxMgr.Reset()
+		fmt.Println("Conversation cleared.")
+	case cmd == "/exit":
+		if scheduler != nil {
+			scheduler.Stop()
+		}
+		if weixinCh != nil {
+			weixinCh.Stop()
+		}
+		os.Exit(0)
+	default:
+		fmt.Printf("Unknown command: %s (type /help)\n", cmd)
+	}
+}
+
+func handleWeixinCommand(cmd string, ch *weixin.Channel) {
+	args := strings.Fields(cmd)
+	if len(args) < 2 {
+		fmt.Println("Usage: /weixin login|logout|status")
+		return
+	}
+	switch args[1] {
+	case "login":
+		fmt.Println("正在启动微信扫码登录...")
+		if err := ch.Login(); err != nil {
+			fmt.Fprintf(os.Stderr, "登录失败: %v\n", err)
+		}
+	case "logout":
+		fmt.Println("正在解绑微信账号...")
+		if err := ch.Logout(); err != nil {
+			fmt.Fprintf(os.Stderr, "解绑失败: %v\n", err)
+		}
+	case "status":
+		s := ch.Status()
+		fmt.Println("\n--- 微信通道 ---")
+		if s.Connected {
+			fmt.Println("状态: 已连接")
+			fmt.Printf("账号: %s\n", s.AccountID)
+			fmt.Printf("用户: %s\n", s.UserID)
+			if !s.LastMsgAt.IsZero() {
+				fmt.Printf("最后消息: %s\n", s.LastMsgAt.Format("15:04:05"))
+			}
+			fmt.Printf("消息数: %d\n", s.MsgCount)
+		} else {
+			fmt.Println("状态: 未连接")
+			if s.AccountID != "" {
+				fmt.Printf("账号: %s\n", s.AccountID)
+			}
+		}
+	default:
+		fmt.Println("Usage: /weixin login|logout|status")
+	}
+}
+
+func setupTools() *tool.Registry {
+	r := tool.NewRegistry()
+	r.Register(&builtin.ReadFile{})
+	r.Register(&builtin.WriteFile{})
+	r.Register(&builtin.Bash{})
+	r.Register(&builtin.Glob{})
+	r.Register(&builtin.Grep{})
+	return r
+}
+
+func setupProviders(cfg *config.Config) *provider.Factory {
+	f := provider.DefaultFactory()
+
+	// Merge providers from config file (overrides auto-detected ones)
+	for name, p := range cfg.Model.Providers {
+		keys := config.GetProviderKeys(p)
+		apiKey := ""
+		if len(keys) > 0 {
+			apiKey = keys[0]
+		}
+		models := p.Models
+		if len(models) == 0 {
+			if p.Model != "" {
+				models = []string{p.Model}
+			} else {
+				models = []string{cfg.Model.Default}
+			}
+		}
+		for _, modelName := range models {
+			f.Register(modelName, provider.Config{
+				Type:             resolveProviderType(name),
+				Model:            modelName,
+				APIKey:           apiKey,
+				BaseURL:          p.BaseURL,
+				Endpoint:         p.Endpoint,
+				SupportsThinking: p.Thinking,
+			})
+		}
+	}
+
+	return f
+}
+
+func resolveProviderType(name string) string {
+	switch name {
+	case "anthropic", "claude":
+		return "claude"
+	case "openai":
+		return "openai"
+	case "deepseek", "zhipu", "qianfan", "moonshot":
+		return "openai-compatible"
+	case "ollama":
+		return "ollama"
+	default:
+		return name
+	}
+}
+
+func resolveModel(f *provider.Factory, cfg *config.Config) model.Model {
+	names := f.Names()
+	if len(names) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no model providers configured\n")
+		os.Exit(1)
+	}
+
+	// Try configured default as provider name
+	if cfg.Model.Default != "" {
+		m, err := f.Build(cfg.Model.Default)
+		if err == nil {
+			return m
+		}
+		slog.Warn("cannot build default provider", "name", cfg.Model.Default, "error", err)
+	}
+
+	// Try fallback chain
+	for _, name := range cfg.Model.Fallback {
+		m, err := f.Build(name)
+		if err == nil {
+			slog.Info("using fallback provider", "name", name)
+			return m
+		}
+		slog.Warn("fallback provider failed", "name", name, "error", err)
+	}
+
+	// Last resort: first available registered provider
+	for _, name := range names {
+		if name == cfg.Model.Default || findInFallback(cfg.Model.Fallback, name) {
+			continue
+		}
+		m, err := f.Build(name)
+		if err == nil {
+			slog.Info("using auto-selected provider", "name", name)
+			return m
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Error: no available model provider\n")
+	os.Exit(1)
+	return nil
+}
+
+func findInFallback(fallback []string, name string) bool {
+	for _, f := range fallback {
+		if f == name {
+			return true
+		}
+	}
+	return false
+}
+
+func setupPermissions(cfg *config.Config) *perm.Checker {
+	var rules []perm.Rule
+	for _, r := range cfg.Permission.Rules {
+		if r.Allow != "" {
+			rules = append(rules, perm.Rule{Action: "allow", Pattern: r.Allow})
+		}
+		if r.Deny != "" {
+			rules = append(rules, perm.Rule{Action: "deny", Pattern: r.Deny})
+		}
+		if r.Ask != "" {
+			rules = append(rules, perm.Rule{Action: "ask", Pattern: r.Ask})
+		}
+	}
+	return perm.NewChecker(perm.Mode(cfg.Permission.Mode), rules)
+}
+
+func setupContext(cfg *config.Config) *context.Manager {
+	return context.NewManager(context.Config{
+		MaxTokens:    cfg.Context.MaxTokens,
+		CompactAt:    cfg.Context.CompactAt,
+		ReserveRatio: cfg.Context.ReserveRatio,
+		SystemPrompt: defaultSystemPrompt() + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy)),
+	})
+}
+
+func setupLogging(level string) {
+	var l slog.Level
+	switch level {
+	case "debug":
+		l = slog.LevelDebug
+	case "warn":
+		l = slog.LevelWarn
+	case "error":
+		l = slog.LevelError
+	default:
+		l = slog.LevelInfo
+	}
+	slog.SetLogLoggerLevel(l)
+}
+
+func parseAutonomy(s string) agent.AutonomyLevel {
+	switch s {
+	case "full":
+		return agent.FullyAutonomous
+	case "semi":
+		return agent.SemiAutonomous
+	default:
+		return agent.Interactive
+	}
+}
+
+func defaultSystemPrompt() string {
+	return `You are gclaw, a helpful and versatile autonomous assistant.
+
+Core rules:
+- Answer directly from your knowledge when possible. Do NOT call tools for simple factual questions, general knowledge, summaries, translations, or explanations.
+- Only use tools (Bash, ReadFile, WriteFile, Glob, Grep) when the task genuinely requires file access, code execution, or current data from the internet.
+- If a tool fails twice in a row, STOP and tell the user what went wrong. Never retry the same approach more than twice.
+- Be concise and direct. Respond in the user's language.
+- Do not list your capabilities unless asked.`
+}

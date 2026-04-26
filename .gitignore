@@ -1,0 +1,40 @@
+# Build output
+/gclaw.exe
+/gclaw
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
+vendor/
+
+# Config - contains API keys
+.gclaw/config.yaml
+.gclaw/config.yml
+.gclaw/local.*
+
+# WeChat session data (sensitive)
+.gclaw/weixin/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Temp
+tmp/
+temp/
