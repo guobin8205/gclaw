@@ -88,7 +88,7 @@ type oaiRequest struct {
 
 type oaiMessage struct {
 	Role             string        `json:"role"`
-	Content          string        `json:"content"`
+	Content          any           `json:"content"`
 	ToolCalls        []oaiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string        `json:"tool_call_id,omitempty"`
 	ReasoningContent string        `json:"reasoning_content,omitempty"`
@@ -248,6 +248,24 @@ func (oa *OpenAI) buildRequest(params model.CallParams) oaiRequest {
 			ToolCallID:       m.ToolID,
 			ReasoningContent: m.ReasoningContent,
 		}
+		// Handle multimodal content (text + images)
+		if len(m.Images) > 0 && (m.Role == "user" || m.Role == "system") {
+			var content []any
+			for _, img := range m.Images {
+				url := img.URL
+				if img.Data != "" {
+					url = "data:" + img.MediaType + ";base64," + img.Data
+				}
+				if url != "" {
+					content = append(content, map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": url},
+					})
+				}
+			}
+			content = append(content, map[string]any{"type": "text", "text": m.Content})
+			om.Content = content
+		}
 		for _, tc := range m.ToolCalls {
 			args, _ := json.Marshal(tc.Input)
 			om.ToolCalls = append(om.ToolCalls, oaiToolCall{
@@ -295,8 +313,8 @@ func (oa *OpenAI) toResponse(or *oaiResponse) *model.Response {
 	}
 
 	for _, choice := range or.Choices {
-		if choice.Message.Content != "" {
-			resp.Text += choice.Message.Content
+		if s, ok := choice.Message.Content.(string); ok && s != "" {
+			resp.Text += s
 		}
 		if choice.Message.ReasoningContent != "" {
 			resp.ReasoningContent += choice.Message.ReasoningContent
