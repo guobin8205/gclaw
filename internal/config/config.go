@@ -80,10 +80,11 @@ type ProviderConfig struct {
 
 // AgentConfig holds agent behavior configuration.
 type AgentConfig struct {
-	Autonomy     string `yaml:"autonomy"`      // interactive|semi|full
-	TickInterval string `yaml:"tick_interval"` // 30s, 1m
-	IdleSleep    string `yaml:"idle_sleep"`    // 5m
-	MaxTurns     int    `yaml:"max_turns"`
+	Autonomy       string `yaml:"autonomy"`        // interactive|semi|full
+	TickInterval   string `yaml:"tick_interval"`   // 30s, 1m
+	IdleSleep      string `yaml:"idle_sleep"`      // 5m
+	MaxTurns       int    `yaml:"max_turns"`
+	BrowserEnabled bool   `yaml:"browser_enabled"` // enable headless browser
 }
 
 // ContextConfig holds context window management.

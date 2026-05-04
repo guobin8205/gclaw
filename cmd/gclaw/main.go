@@ -38,6 +38,10 @@ import (
 	ttstool "github.com/openclaw/gclaw/internal/tool/builtin/tts"
 	"github.com/openclaw/gclaw/internal/imagegen"
 	ttsbackend "github.com/openclaw/gclaw/internal/tts"
+	browsertool "github.com/openclaw/gclaw/internal/tool/builtin/browser"
+	mcptool "github.com/openclaw/gclaw/internal/tool/builtin/mcp"
+	"github.com/openclaw/gclaw/internal/browser"
+	"github.com/openclaw/gclaw/internal/mcp"
 
 	// Blank imports trigger tool self-registration via init().
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/file"
@@ -52,6 +56,8 @@ import (
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/image"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/tts"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/codeexec"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/browser"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/mcp"
 	"github.com/openclaw/gclaw/internal/tool/builtin/skill_tools"
 	"github.com/openclaw/gclaw/internal/tool/builtin/meta"
 )
@@ -438,6 +444,32 @@ func runREPL() {
 		if backends := ttsFactory.Available(); len(backends) > 0 {
 			ttstool.TTSFactory = ttsFactory
 			slog.Info("tts: available backends", "backends", backends)
+		}
+		
+		// Wire browser automation (optional - requires Chrome/Chromium)
+		if cfg.Agent.BrowserEnabled {
+			b, err := browser.NewChromedpBrowser()
+			if err != nil {
+				slog.Warn("browser: failed to start", "error", err)
+			} else {
+				browsertool.BrowserRef = b
+				slog.Info("browser: headless Chrome started")
+			}
+		}
+
+		// Wire MCP client (optional)
+		if len(cfg.MCP.Servers) > 0 {
+			mgr := mcp.NewManager()
+			for _, srv := range cfg.MCP.Servers {
+				mgr.AddServer(mcp.ServerConfig{
+					Name:    srv.Name,
+					Command: srv.Command,
+					URL:     srv.URL,
+					Env:     srv.Env,
+				})
+			}
+			mcptool.ManagerRef = mgr
+			slog.Info("mcp: configured servers", "count", len(cfg.MCP.Servers))
 		}
 		// Setup autonomous scheduler for semi/full modes
 	var scheduler *autonomous.Scheduler
