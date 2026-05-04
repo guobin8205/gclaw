@@ -30,6 +30,7 @@ type Config struct {
 	Delegate   DelegateConfig   `yaml:"delegate"`
 	Logging    LoggingConfig    `yaml:"logging"`
 	WebSearch  WebSearchConfig  `yaml:"websearch"`
+	MCP        MCPConfig        `yaml:"mcp"`
 }
 
 // CronConfig holds scheduled job configuration.
@@ -196,6 +197,19 @@ type LoggingConfig struct {
 	Level        string `yaml:"level"` // debug|info|warn|error
 	Audit        bool   `yaml:"audit"`
 	OtelEndpoint string `yaml:"otel_endpoint"`
+}
+
+// MCPConfig holds MCP (Model Context Protocol) client configuration.
+type MCPConfig struct {
+	Servers []MCPServerConfig `yaml:"servers"`
+}
+
+// MCPServerConfig holds configuration for a single MCP server connection.
+type MCPServerConfig struct {
+	Name    string            `yaml:"name"`
+	Command string            `yaml:"command,omitempty"`
+	URL     string            `yaml:"url,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty"`
 }
 
 // Duration parses a duration string, supporting both Go and human formats.
@@ -423,6 +437,10 @@ func merge(dst *Config, src Config) {
 	// Cron.Model merge
 	if src.Cron.Model != "" {
 		dst.Cron.Model = src.Cron.Model
+	}
+	// MCP merge
+	if len(src.MCP.Servers) > 0 {
+		dst.MCP.Servers = src.MCP.Servers
 	}
 }
 
