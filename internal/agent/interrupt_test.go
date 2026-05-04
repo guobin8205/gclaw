@@ -9,7 +9,7 @@ import (
 
 	"github.com/openclaw/gclaw/internal/model"
 	"github.com/openclaw/gclaw/internal/tool"
-	"github.com/openclaw/gclaw/internal/tool/builtin/file_read"
+	"github.com/openclaw/gclaw/internal/tool/builtin/file"
 )
 
 // --- 中断系统集成验证 ---
@@ -63,7 +63,7 @@ func (m *multiTurnMock) Call(ctx context.Context, _ model.CallParams) (*model.Re
 
 func TestInterrupt_InjectedDuringRun(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 
 	// 模拟 8 轮 tool call + 1 轮结束 = 9 turns，每轮 30ms
 	mock := newMultiTurnMock(8, 30*time.Millisecond)
@@ -110,7 +110,7 @@ func TestInterrupt_InjectedDuringRun(t *testing.T) {
 
 func TestInterrupt_MultipleMerged(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 
 	mock := newMultiTurnMock(8, 30*time.Millisecond)
 
@@ -156,7 +156,7 @@ func TestInterrupt_MultipleMerged(t *testing.T) {
 
 func TestInterrupt_BufferOverflow(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 
 	mock := newMultiTurnMock(8, 50*time.Millisecond)
 
@@ -189,7 +189,7 @@ func TestInterrupt_BufferOverflow(t *testing.T) {
 
 func TestInterruptAndStop(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 
 	mock := newMultiTurnMock(50, 100*time.Millisecond)
 

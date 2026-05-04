@@ -6,13 +6,13 @@ import (
 
 	"github.com/openclaw/gclaw/internal/model"
 	"github.com/openclaw/gclaw/internal/tool"
-	"github.com/openclaw/gclaw/internal/tool/builtin/file_read"
+	"github.com/openclaw/gclaw/internal/tool/builtin/file"
 	"github.com/openclaw/gclaw/internal/tool/builtin/shell"
 )
 
 func TestAgentRun(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 	registry.Register(&shell.BashTool{})
 
 	mock := model.NewMock("mock-model")
@@ -38,7 +38,7 @@ func TestAgentRun(t *testing.T) {
 
 func TestAgentToolUse(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 
 	mock := model.NewMock("mock-model")
 
@@ -66,7 +66,7 @@ func TestAgentToolUse(t *testing.T) {
 
 func TestAgentMaxTurns(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 
 	mock := model.NewMock("mock-model")
 
@@ -87,7 +87,7 @@ func TestAgentMaxTurns(t *testing.T) {
 
 func TestAgentRunStreaming(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(&file_read.ReadFileTool{})
+	registry.Register(&file.ReadFileTool{})
 
 	mock := model.NewMock("mock-model")
 
