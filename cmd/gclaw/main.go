@@ -29,9 +29,11 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 	timetool "github.com/openclaw/gclaw/internal/tool/builtin/timetool"
 	memtool "github.com/openclaw/gclaw/internal/tool/builtin/memory"
+	clarifypkg "github.com/openclaw/gclaw/internal/tool/builtin/clarify"
 
 	// Blank imports trigger tool self-registration via init().
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/file"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/clarify"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/memory"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/search"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
@@ -412,6 +414,35 @@ func runREPL() {
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
+
+	// Wire clarify tool callback for interactive mode
+	clarifypkg.Callback = func(question string, options []clarifypkg.Option) (string, error) {
+		fmt.Println()
+		fmt.Printf("? %s\n", question)
+		if len(options) > 0 {
+			for i, o := range options {
+				fmt.Printf("  %d. %s", i+1, o.Label)
+				if o.Description != "" {
+					fmt.Printf(" - %s", o.Description)
+				}
+				fmt.Println()
+			}
+			fmt.Print("Choose (number or text): ")
+		} else {
+			fmt.Print("Your answer: ")
+		}
+		if !scanner.Scan() {
+			return "", fmt.Errorf("input ended")
+		}
+		answer := strings.TrimSpace(scanner.Text())
+		if len(options) > 0 {
+			idx := 0
+			if _, err := fmt.Sscanf(answer, "%d", &idx); err == nil && idx >= 1 && idx <= len(options) {
+				return options[idx-1].Label, nil
+			}
+		}
+		return answer, nil
+	}
 
 	for {
 		fmt.Print("> ")
