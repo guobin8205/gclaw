@@ -29,6 +29,7 @@ type Config struct {
 	Gateway    GatewayConfig    `yaml:"gateway"`
 	Delegate   DelegateConfig   `yaml:"delegate"`
 	Logging    LoggingConfig    `yaml:"logging"`
+	WebSearch  WebSearchConfig  `yaml:"websearch"`
 }
 
 // CronConfig holds scheduled job configuration.
@@ -170,6 +171,12 @@ type MemoryConfig struct {
 	Enabled       bool   `yaml:"enabled"`
 	Dir           string `yaml:"dir"`
 	PrefetchLimit int    `yaml:"prefetch_limit"`
+}
+
+// WebSearchConfig holds web search backend configuration.
+type WebSearchConfig struct {
+	Backend    string `yaml:"backend"`    // tavily | exa | firecrawl | google | auto
+	MaxResults int    `yaml:"max_results"`
 }
 
 // PluginsConfig holds plugin system configuration.
