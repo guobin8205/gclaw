@@ -21,7 +21,12 @@ go test ./internal/cron/ -run TestParse
 go test -race ./...
 ```
 
-Module: `github.com/openclaw/gclaw` — Go 1.26. Only external dependency is `gopkg.in/yaml.v3`.
+Module: `github.com/openclaw/gclaw` — Go 1.26. Key external dependencies: `gopkg.in/yaml.v3`, `charm.land/bubbletea/v2` (Bubble Tea v2 TUI framework), `charm.land/lipgloss/v2` (terminal styling).
+
+**Cross-compile for Linux:**
+```powershell
+$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o gclaw-linux ./cmd/gclaw/
+```
 
 ## Architecture
 
@@ -31,11 +36,32 @@ The CLI (`cmd/gclaw/main.go`) creates **three independent `agent.Agent` instance
 
 | Agent | MaxTurns | Purpose | Model |
 |-------|----------|---------|-------|
-| `ag` | 100 | REPL interactive loop | `model.default` |
+| `ag` | 100 | REPL interactive loop (TUI) | `model.default` |
 | `weixinAgent` | 20 | WeChat message handling | `model.default` |
 | `cronAgent` | 10 | Cron job execution | `cron.model` (falls back to default) |
 
 Each runs independently — WeChat and cron never block the REPL, and vice versa.
+
+### TUI (`internal/tui/`)
+
+Full Bubble Tea v2 TUI replacing the original `bufio.Scanner` REPL. Layout: transcript (virtual scroll + scrollbar) → divider → status bar → composer.
+
+**Components:**
+- `App` — root `tea.Model`, dispatches key events, manages busy/idle state
+- `Transcript` — virtual scrolling with right-side scrollbar, renders 4 message kinds (User, Assistant, ToolCall, Event)
+- `Composer` — multi-line input with `[]rune` storage (correct multi-byte/Chinese support), attachments, cursor movement
+- `StatusBar` — left-aligned `● model │ ctx │ agents │ bg │ cron │ time`
+- `ApprovalRequest` — tool approval popup (Y/N/A/Esc)
+- `CompletionEngine` — slash command matching with `/` prefix
+- `History` — persistent command history (`~/.gclaw/history`), search, dedup
+- `LogBuffer` — ring buffer with `slog.Handler` integration
+- `RenderMarkdown` — code blocks, bold, italic, inline code
+
+**Streaming:** `runAgentCmd` uses `Agent.RunStreaming` with `tea.Program.Send` callback to push `streamChunkMsg` for real-time text display. `SetSend()` is called after `tea.NewProgram` creation to wire the callback.
+
+**Themes:** `tokyo-night` (default), `catppuccin-mocha`, `light`, `terminal`. Configurable via `tui.theme` in config.yaml.
+
+**Key bindings:** Enter=send, Ctrl+Enter=newline, Esc=clear, Ctrl+C=quit/clear, Ctrl+L=clear transcript, ↑↓=history, PgUp/PgDn=scroll, Tab=completion (planned).
 
 ### Agent Loop (`internal/agent/agent.go`)
 

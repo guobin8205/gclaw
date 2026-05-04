@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	stdctx "context"
 	"fmt"
 	"log/slog"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/openclaw/gclaw/internal/agent"
 	"github.com/openclaw/gclaw/internal/autonomous"
 	"github.com/openclaw/gclaw/internal/channel/weixin"
@@ -29,6 +29,7 @@ import (
 	"github.com/openclaw/gclaw/internal/skill"
 	"github.com/openclaw/gclaw/internal/task"
 	"github.com/openclaw/gclaw/internal/tool"
+	"github.com/openclaw/gclaw/internal/tui"
 	"github.com/openclaw/gclaw/internal/websearch"
 	timetool "github.com/openclaw/gclaw/internal/tool/builtin/timetool"
 	memtool "github.com/openclaw/gclaw/internal/tool/builtin/memory"
@@ -529,108 +530,80 @@ func runREPL() {
 		fmt.Println("Enter messages to send to the agent, or /help for commands.")
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
+	// Wire TUI
+	theme := tui.LoadTheme(cfg.TUI.Theme)
+	logBuf := tui.NewLogBuffer(1000)
+	hist := tui.NewHistory(config.ExpandPath("~/.gclaw/history"), cfg.TUI.History.MaxEntries)
+	compEng := tui.NewCompletionEngine(nil)
 
-	// Wire clarify tool callback for interactive mode
 	clarifypkg.Callback = func(question string, options []clarifypkg.Option) (string, error) {
-		fmt.Println()
-		fmt.Printf("? %s\n", question)
-		if len(options) > 0 {
-			for i, o := range options {
-				fmt.Printf("  %d. %s", i+1, o.Label)
-				if o.Description != "" {
-					fmt.Printf(" - %s", o.Description)
-				}
-				fmt.Println()
-			}
-			fmt.Print("Choose (number or text): ")
-		} else {
-			fmt.Print("Your answer: ")
-		}
-		if !scanner.Scan() {
-			return "", fmt.Errorf("input ended")
-		}
-		answer := strings.TrimSpace(scanner.Text())
-		if len(options) > 0 {
-			idx := 0
-			if _, err := fmt.Sscanf(answer, "%d", &idx); err == nil && idx >= 1 && idx <= len(options) {
-				return options[idx-1].Label, nil
-			}
-		}
-		return answer, nil
+		return "", fmt.Errorf("clarify not yet supported in TUI mode")
 	}
 
-	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
-			break
-		}
+	cmdContext := &cmdCtx{
+		cfg:             cfg,
+		ctxMgr:          ctxManager,
+		taskMgr:         taskMgr,
+		ag:              ag,
+		scheduler:       scheduler,
+		cronSched:       cronSched,
+		weixinCh:        weixinCh,
+		providerFactory: providerFactory,
+		memoryMgr:       memoryMgr,
+		sessionStore:    sessionStore,
+		skillMgr:        skillMgr,
+		mcpMgr:          mcpMgr,
+		gw:              gw,
+	}
 
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-
-		// Handle slash commands
-		if strings.HasPrefix(input, "/") {
-			handleCommand(input, &cmdCtx{
-				cfg:             cfg,
-				ctxMgr:          ctxManager,
-				taskMgr:         taskMgr,
-				ag:              ag,
-				scheduler:       scheduler,
-				cronSched:       cronSched,
-				weixinCh:        weixinCh,
-				providerFactory: providerFactory,
-				memoryMgr:       memoryMgr,
-				sessionStore:    sessionStore,
-				skillMgr:        skillMgr,
-				mcpMgr:          mcpMgr,
-				gw:              gw,
-			})
-			continue
-		}
-
-		// In autonomous mode, publish user input as event
-		if scheduler != nil {
-			scheduler.Publish(autonomous.Event{
-				Type:    autonomous.EventUser,
-				Source:  "cli",
-				Payload: input,
-				Time:    time.Now(),
-			})
-			fmt.Println("(message sent to autonomous agent)")
-			continue
-		}
-
-		// Interactive mode: run agent loop directly
-		slog.Debug("running agent", "input", input)
-
-		agentInput := input
-		if memoryMgr != nil {
-			if ctx := memoryMgr.Prefetch(stdctx.Background(), input, cfg.Memory.PrefetchLimit); ctx != "" {
-				agentInput = ctx + "\n\nUser message: " + input
+	app := tui.NewApp(tui.Deps{
+		Config:  cfg,
+		Agent:   ag,
+		Theme:   theme,
+		LogBuf:  logBuf,
+		History: hist,
+		CompEng: compEng,
+		OnSubmit: func(ctx stdctx.Context, input string, images []string) (string, error) {
+			if scheduler != nil {
+				scheduler.Publish(autonomous.Event{
+					Type:    autonomous.EventUser,
+					Source:  "cli",
+					Payload: input,
+					Time:    time.Now(),
+				})
+				return "(message sent to autonomous agent)", nil
 			}
-		}
 
-		response, err := ag.Run(stdctx.Background(), agentInput)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
-			continue
-		}
+			agentInput := input
+			if memoryMgr != nil {
+				if memCtx := memoryMgr.Prefetch(ctx, input, cfg.Memory.PrefetchLimit); memCtx != "" {
+					agentInput = memCtx + "\n\nUser message: " + input
+				}
+			}
 
-		if memoryMgr != nil {
-			memoryMgr.SyncTurn(stdctx.Background(), input, response)
-		}
+			response, err := ag.Run(ctx, agentInput)
+			if err != nil {
+				return "", err
+			}
 
-		if sessionStore != nil {
-			_ = sessionStore.AddMessage(currentSessionID, "user", input, "", "", "")
-			_ = sessionStore.AddMessage(currentSessionID, "assistant", response, "", "", "")
-		}
+			if memoryMgr != nil {
+				memoryMgr.SyncTurn(ctx, input, response)
+			}
+			if sessionStore != nil {
+				_ = sessionStore.AddMessage(currentSessionID, "user", input, "", "", "")
+				_ = sessionStore.AddMessage(currentSessionID, "assistant", response, "", "", "")
+			}
+			return response, nil
+		},
+		OnSlash: func(cmd string) {
+			handleCommand(cmd, cmdContext)
+		},
+	})
 
-		fmt.Println()
-		fmt.Println(response)
-		fmt.Println()
+	p := tea.NewProgram(app)
+	app.SetSend(p.Send)
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 	}
 }
 

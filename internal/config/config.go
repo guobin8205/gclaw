@@ -32,6 +32,7 @@ type Config struct {
 	WebSearch  WebSearchConfig  `yaml:"websearch"`
 	MCP        MCPConfig        `yaml:"mcp"`
 	Checkpoint CheckpointConfig `yaml:"checkpoint"`
+	TUI        TUIConfig        `yaml:"tui"`
 }
 
 // CronConfig holds scheduled job configuration.
@@ -210,6 +211,27 @@ type CheckpointConfig struct {
 	MaxSnapshots int  `yaml:"max_snapshots"`
 }
 
+// TUIConfig holds TUI (terminal UI) configuration.
+type TUIConfig struct {
+	Theme      string             `yaml:"theme"`
+	History    TUIHistoryConfig   `yaml:"history"`
+	Log        TUILogConfig       `yaml:"log"`
+	Completion TUICompletionConfig `yaml:"completion"`
+}
+
+type TUIHistoryConfig struct {
+	MaxEntries int `yaml:"max_entries"`
+}
+
+type TUILogConfig struct {
+	BufferSize int `yaml:"buffer_size"`
+}
+
+type TUICompletionConfig struct {
+	DebounceMs int `yaml:"debounce_ms"`
+	MaxVisible int `yaml:"max_visible"`
+}
+
 // MCPConfig holds MCP (Model Context Protocol) client configuration.
 type MCPConfig struct {
 	Servers []MCPServerConfig `yaml:"servers"`
@@ -277,6 +299,19 @@ func Defaults() Config {
 		Checkpoint: CheckpointConfig{
 			Enabled:      false,
 			MaxSnapshots: 50,
+		},
+		TUI: TUIConfig{
+			Theme: "tokyo-night",
+			History: TUIHistoryConfig{
+				MaxEntries: 10000,
+			},
+			Log: TUILogConfig{
+				BufferSize: 200,
+			},
+			Completion: TUICompletionConfig{
+				DebounceMs: 60,
+				MaxVisible: 16,
+			},
 		},
 	}
 }
