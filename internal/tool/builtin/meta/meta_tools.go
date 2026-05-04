@@ -2,6 +2,7 @@ package meta
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -38,24 +39,87 @@ func (t *delegateTaskTool) InputSchema() tool.Schema {
 	return tool.Schema{
 		Type: "object",
 		Properties: map[string]tool.Property{
-			"goal":    {Type: "string", Description: "Clear, self-contained task description for the worker"},
-			"timeout": {Type: "string", Description: "Timeout (e.g., '30s', '5m'), default 5m"},
+			"goal": {Type: "string", Description: "Clear, self-contained task description for the worker (single mode)"},
+			"tasks": {
+				Type:        "array",
+				Description: "Array of tasks to delegate in parallel (batch mode). Each item must have a 'goal'.",
+				Items: &tool.Property{
+					Type: "object",
+					Properties: map[string]tool.Property{
+						"goal":    {Type: "string", Description: "Task goal"},
+						"context": {Type: "string", Description: "Optional additional context"},
+					},
+				},
+			},
+			"max_concurrent": {Type: "integer", Description: "Max concurrent workers for batch mode (capped by dispatcher limit), default 3"},
+			"timeout":        {Type: "string", Description: "Timeout (e.g., '30s', '5m'), default 5m"},
 		},
-		Required: []string{"goal"},
+		Required: []string{},
 	}
 }
 
 func (t *delegateTaskTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
-	goal, _ := params["goal"].(string)
-	if goal == "" {
-		return tool.ToolResult{Content: "Error: goal is required", IsError: true}, nil
-	}
-
 	timeout := 5 * time.Minute
 	if ts, ok := params["timeout"].(string); ok && ts != "" {
 		if d, err := time.ParseDuration(ts); err == nil {
 			timeout = d
 		}
+	}
+
+	// Batch mode
+	if tasksRaw, ok := params["tasks"].([]any); ok && len(tasksRaw) > 0 {
+		tasks := make([]delegate.Task, 0, len(tasksRaw))
+		for i, raw := range tasksRaw {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				return tool.ToolResult{Content: fmt.Sprintf("Error: task %d is not an object", i), IsError: true}, nil
+			}
+			goal, _ := m["goal"].(string)
+			if goal == "" {
+				return tool.ToolResult{Content: fmt.Sprintf("Error: task %d missing goal", i), IsError: true}, nil
+			}
+			ctxStr, _ := m["context"].(string)
+			tasks = append(tasks, delegate.Task{
+				ID:      fmt.Sprintf("task-%d", i),
+				Goal:    goal,
+				Context: ctxStr,
+			})
+		}
+
+		results, err := DispatcherRef.BatchDelegate(ctx, tasks, 1, timeout, nil)
+		if err != nil {
+			return tool.ToolResult{Content: fmt.Sprintf("Batch delegate failed: %v", err), IsError: true}, nil
+		}
+
+		// Build JSON array response
+		type resultItem struct {
+			TaskID string `json:"task_id"`
+			Goal   string `json:"goal"`
+			Output string `json:"output"`
+			Error  string `json:"error,omitempty"`
+		}
+		items := make([]resultItem, len(results))
+		for i, r := range results {
+			items[i] = resultItem{
+				TaskID: r.TaskID,
+				Goal:   tasks[i].Goal,
+				Output: r.Output,
+			}
+			if r.Error != nil {
+				items[i].Error = r.Error.Error()
+			}
+		}
+		jsonBytes, err := json.MarshalIndent(items, "", "  ")
+		if err != nil {
+			return tool.ToolResult{Content: fmt.Sprintf("Error encoding results: %v", err), IsError: true}, nil
+		}
+		return tool.ToolResult{Content: string(jsonBytes)}, nil
+	}
+
+	// Single mode
+	goal, _ := params["goal"].(string)
+	if goal == "" {
+		return tool.ToolResult{Content: "Error: goal or tasks is required", IsError: true}, nil
 	}
 
 	result, err := DispatcherRef.Delegate(ctx, goal, 1, timeout)

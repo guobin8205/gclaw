@@ -37,8 +37,22 @@ type JobState struct {
 	FinishAt time.Time
 }
 
+// Task represents a unit of work to be delegated.
+type Task struct {
+	ID      string
+	Goal    string
+	Context string // optional additional context
+}
+
+// Progress reports the status of a task in a batch.
+type Progress struct {
+	TaskID string
+	Status string // "started", "completed", "failed"
+}
+
 // DelegateResult is the outcome of a delegated task.
 type DelegateResult struct {
+	TaskID string
 	Output string
 	Turns  int
 	Error  error
@@ -119,6 +133,7 @@ func (d *Dispatcher) Delegate(ctx context.Context, goal string, depth int, timeo
 
 		output, err := runner.Run(execCtx, goal)
 		job.Result = &DelegateResult{
+			TaskID: job.ID,
 			Output: output,
 			Error:  err,
 		}
@@ -140,6 +155,80 @@ func (d *Dispatcher) Delegate(ctx context.Context, goal string, depth int, timeo
 		return nil, job.Result.Error
 	}
 	return job.Result, nil
+}
+
+// BatchDelegate runs multiple sub-tasks in parallel and returns index-aligned results.
+func (d *Dispatcher) BatchDelegate(ctx context.Context, tasks []Task, depth int, timeout time.Duration, progressCh chan<- Progress) ([]DelegateResult, error) {
+	if depth > d.maxDepth {
+		return nil, fmt.Errorf("max depth exceeded: %d > %d", depth, d.maxDepth)
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+
+	results := make([]DelegateResult, len(tasks))
+	var wg sync.WaitGroup
+
+	for i, task := range tasks {
+		wg.Add(1)
+		go func(idx int, t Task) {
+			defer wg.Done()
+
+			if progressCh != nil {
+				select {
+				case progressCh <- Progress{TaskID: t.ID, Status: "started"}:
+				case <-ctx.Done():
+				}
+			}
+
+			// Acquire semaphore
+			select {
+			case d.sem <- struct{}{}:
+			case <-ctx.Done():
+				results[idx] = DelegateResult{TaskID: t.ID, Error: ctx.Err()}
+				if progressCh != nil {
+					select {
+					case progressCh <- Progress{TaskID: t.ID, Status: "failed"}:
+					default:
+					}
+				}
+				return
+			}
+			defer func() { <-d.sem }()
+
+			execCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+
+			runner := d.factory()
+			defer runner.Reset()
+
+			goal := t.Goal
+			if t.Context != "" {
+				goal = t.Goal + "\n\nContext: " + t.Context
+			}
+
+			output, err := runner.Run(execCtx, goal)
+			results[idx] = DelegateResult{
+				TaskID: t.ID,
+				Output: output,
+				Error:  err,
+			}
+
+			if progressCh != nil {
+				status := "completed"
+				if err != nil {
+					status = "failed"
+				}
+				select {
+				case progressCh <- Progress{TaskID: t.ID, Status: status}:
+				default:
+				}
+			}
+		}(i, task)
+	}
+
+	wg.Wait()
+	return results, nil
 }
 
 // Stats returns dispatcher metrics.
