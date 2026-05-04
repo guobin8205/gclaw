@@ -278,6 +278,9 @@ func (a *Agent) executeTool(ctx context.Context, tu model.ToolUse) error {
 		}
 	}
 
+	// Normalize array params: wrap bare scalars in single-element lists
+	tool.NormalizeParams(t.InputSchema(), tu.Input)
+
 	result, err := t.Execute(ctx, tu.Input)
 	if err != nil {
 		return err
