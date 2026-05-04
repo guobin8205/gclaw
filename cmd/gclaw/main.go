@@ -55,6 +55,7 @@ import (
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/vision"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/image"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/tts"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/video"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/codeexec"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/browser"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/mcp"
