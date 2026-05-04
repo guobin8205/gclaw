@@ -42,13 +42,21 @@ type Usage struct {
 	CacheWrite   int
 }
 
+// ImageContent represents an image in a message.
+type ImageContent struct {
+	Data      string // base64 encoded image data
+	MediaType string // "image/png", "image/jpeg", etc.
+	URL       string // remote URL (alternative to Data)
+}
+
 // Message represents a message in the conversation.
 type Message struct {
-	Role             string    // "system", "user", "assistant", "tool"
+	Role             string         // "system", "user", "assistant", "tool"
 	Content          string
-	ToolID           string    // for tool result messages
-	ToolCalls        []ToolUse // for assistant messages with tool calls
-	ReasoningContent string    // for DeepSeek-R1/V4 reasoning_content
+	Images           []ImageContent // optional, for vision-capable models
+	ToolID           string         // for tool result messages
+	ToolCalls        []ToolUse      // for assistant messages with tool calls
+	ReasoningContent string         // for DeepSeek-R1/V4 reasoning_content
 }
 
 // CallParams holds parameters for non-streaming model calls.

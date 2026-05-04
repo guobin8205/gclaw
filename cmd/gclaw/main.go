@@ -33,6 +33,11 @@ import (
 	clarifypkg "github.com/openclaw/gclaw/internal/tool/builtin/clarify"
 	webtool "github.com/openclaw/gclaw/internal/tool/builtin/web"
 	sessiontool "github.com/openclaw/gclaw/internal/tool/builtin/session"
+	visiontool "github.com/openclaw/gclaw/internal/tool/builtin/vision"
+	imagetool "github.com/openclaw/gclaw/internal/tool/builtin/image"
+	ttstool "github.com/openclaw/gclaw/internal/tool/builtin/tts"
+	"github.com/openclaw/gclaw/internal/imagegen"
+	ttsbackend "github.com/openclaw/gclaw/internal/tts"
 
 	// Blank imports trigger tool self-registration via init().
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/file"
@@ -43,6 +48,9 @@ import (
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/todo"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/web"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/vision"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/image"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/tts"
 	"github.com/openclaw/gclaw/internal/tool/builtin/skill_tools"
 	"github.com/openclaw/gclaw/internal/tool/builtin/meta"
 )
@@ -413,7 +421,24 @@ func runREPL() {
 		return resp.Text, nil
 	}
 
-	// Setup autonomous scheduler for semi/full modes
+	
+		// Wire vision tool - pass model reference for image analysis
+		visiontool.ModelRef = modelProvider
+
+		// Wire image generation tool
+		imgFactory := imagegen.NewDefaultFactory("")
+		if backends := imgFactory.Available(); len(backends) > 0 {
+			imagetool.GenFactory = imgFactory
+			slog.Info("imagegen: available backends", "backends", backends)
+		}
+
+		// Wire TTS tool
+		ttsFactory := ttsbackend.NewDefaultFactory("")
+		if backends := ttsFactory.Available(); len(backends) > 0 {
+			ttstool.TTSFactory = ttsFactory
+			slog.Info("tts: available backends", "backends", backends)
+		}
+		// Setup autonomous scheduler for semi/full modes
 	var scheduler *autonomous.Scheduler
 	if autonomyLevel >= agent.SemiAutonomous {
 		tickInterval, err := config.Duration(cfg.Agent.TickInterval)

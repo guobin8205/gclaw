@@ -237,6 +237,38 @@ func (c *Claude) buildRequest(params model.CallParams) claudeRequest {
 func (c *Claude) convertMessage(m model.Message) claudeMessage {
 	switch m.Role {
 	case "user":
+		// Handle multimodal content (text + images)
+		if len(m.Images) > 0 {
+			var content []any
+			for _, img := range m.Images {
+				if img.Data != "" {
+					content = append(content, map[string]any{
+						"type": "image",
+						"source": map[string]any{
+							"type":       "base64",
+							"media_type": img.MediaType,
+							"data":       img.Data,
+						},
+					})
+				} else if img.URL != "" {
+					content = append(content, map[string]any{
+						"type": "image",
+						"source": map[string]any{
+							"type": "url",
+							"url":  img.URL,
+						},
+					})
+				}
+			}
+			content = append(content, map[string]any{
+				"type": "text",
+				"text": m.Content,
+			})
+			return claudeMessage{
+				Role:    "user",
+				Content: content,
+			}
+		}
 		return claudeMessage{
 			Role: "user",
 			Content: []claudeTextContent{{Type: "text", Text: m.Content}},
