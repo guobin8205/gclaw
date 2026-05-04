@@ -15,8 +15,33 @@ type Schema struct {
 
 // Property describes a single parameter in the tool schema.
 type Property struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
+	Type        string              `json:"type"`
+	Description string              `json:"description"`
+	Enum        []string            `json:"enum,omitempty"`
+	Items       *Property           `json:"items,omitempty"`
+	Properties  map[string]Property `json:"properties,omitempty"`
+}
+
+// propertyToMap converts a Property to a map[string]any for JSON serialization.
+func propertyToMap(p Property) map[string]any {
+	m := map[string]any{
+		"type":        p.Type,
+		"description": p.Description,
+	}
+	if len(p.Enum) > 0 {
+		m["enum"] = p.Enum
+	}
+	if p.Items != nil {
+		m["items"] = propertyToMap(*p.Items)
+	}
+	if len(p.Properties) > 0 {
+		props := make(map[string]any)
+		for k, v := range p.Properties {
+			props[k] = propertyToMap(v)
+		}
+		m["properties"] = props
+	}
+	return m
 }
 
 // ToolResult is the result of executing a tool.
@@ -71,10 +96,7 @@ func (r *Registry) List() []model.ToolDef {
 		if len(t.InputSchema().Properties) > 0 {
 			props := make(map[string]any)
 			for k, v := range t.InputSchema().Properties {
-				props[k] = map[string]any{
-					"type":        v.Type,
-					"description": v.Description,
-				}
+				props[k] = propertyToMap(v)
 			}
 			schema["properties"] = props
 		}
@@ -110,10 +132,7 @@ func (r *Registry) listFiltered(toolset *string) []model.ToolDef {
 		if len(t.InputSchema().Properties) > 0 {
 			props := make(map[string]any)
 			for k, v := range t.InputSchema().Properties {
-				props[k] = map[string]any{
-					"type":        v.Type,
-					"description": v.Description,
-				}
+				props[k] = propertyToMap(v)
 			}
 			schema["properties"] = props
 		}
