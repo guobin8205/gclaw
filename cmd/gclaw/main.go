@@ -27,17 +27,22 @@ import (
 	"github.com/openclaw/gclaw/internal/skill"
 	"github.com/openclaw/gclaw/internal/task"
 	"github.com/openclaw/gclaw/internal/tool"
+	"github.com/openclaw/gclaw/internal/websearch"
 	timetool "github.com/openclaw/gclaw/internal/tool/builtin/timetool"
 	memtool "github.com/openclaw/gclaw/internal/tool/builtin/memory"
 	clarifypkg "github.com/openclaw/gclaw/internal/tool/builtin/clarify"
+	webtool "github.com/openclaw/gclaw/internal/tool/builtin/web"
+	sessiontool "github.com/openclaw/gclaw/internal/tool/builtin/session"
 
 	// Blank imports trigger tool self-registration via init().
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/file"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/clarify"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/memory"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/search"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/session"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/todo"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/web"
 	"github.com/openclaw/gclaw/internal/tool/builtin/skill_tools"
 	"github.com/openclaw/gclaw/internal/tool/builtin/meta"
 )
@@ -382,6 +387,31 @@ func runREPL() {
 		meta.WeixinChRef = weixinCh
 	}
 	meta.TaskMgrRef = taskMgr
+
+	// Wire session search tool
+	if sessionStore != nil {
+		sessiontool.StoreRef = sessionStore
+	}
+
+	// Wire web search tool
+	searchFactory := websearch.NewDefaultFactory(cfg.WebSearch.Backend)
+	if backends := searchFactory.Available(); len(backends) > 0 {
+		webtool.SearchFactory = searchFactory
+		slog.Info("websearch: available backends", "backends", backends)
+	}
+
+	// Wire web extract LLM summarization (optional)
+	webtool.ModelFn = func(ctx stdctx.Context, prompt string) (string, error) {
+		resp, err := modelProvider.Call(ctx, model.CallParams{
+			SystemPrompt: "Summarize the following web page content concisely, preserving key information.",
+			Messages:     []model.Message{{Role: "user", Content: prompt}},
+			MaxTokens:    4096,
+		})
+		if err != nil {
+			return "", err
+		}
+		return resp.Text, nil
+	}
 
 	// Setup autonomous scheduler for semi/full modes
 	var scheduler *autonomous.Scheduler
