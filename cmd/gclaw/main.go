@@ -28,9 +28,11 @@ import (
 	"github.com/openclaw/gclaw/internal/task"
 	"github.com/openclaw/gclaw/internal/tool"
 	timetool "github.com/openclaw/gclaw/internal/tool/builtin/timetool"
+	memtool "github.com/openclaw/gclaw/internal/tool/builtin/memory"
 
 	// Blank imports trigger tool self-registration via init().
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/file"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/memory"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/search"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/todo"
@@ -136,6 +138,16 @@ func runREPL() {
 	permChecker := setupPermissions(cfg)
 	ctxManager := setupContext(cfg, providerFactory)
 	taskMgr := task.NewManager(10)
+
+	// Initialize memory tool
+	if cfg.Memory.Enabled {
+		memDir := cfg.Memory.Dir
+		if memDir == "" {
+			memDir = config.ExpandPath("~/.gclaw/memory")
+		}
+		os.MkdirAll(memDir, 0755)
+		memtool.Dir = memDir
+	}
 
 	// Initialize skill system
 	var skillMgr *skill.Manager
