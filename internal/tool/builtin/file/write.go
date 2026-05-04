@@ -1,4 +1,4 @@
-package file_write
+package file
 
 import (
 	"context"
@@ -12,11 +12,11 @@ import (
 // WriteFileTool creates or overwrites a file with content.
 type WriteFileTool struct{}
 
-func (t *WriteFileTool) Name() string        { return "WriteFile" }
-func (t *WriteFileTool) Toolset() string       { return "write" }
-func (t *WriteFileTool) Description() string { return "Write content to a file, overwriting if it exists." }
-func (t *WriteFileTool) Check() bool            { return true }
-func (t *WriteFileTool) ConcurrencySafe() bool  { return false }
+func (t *WriteFileTool) Name() string                              { return "WriteFile" }
+func (t *WriteFileTool) Toolset() string                            { return "file" }
+func (t *WriteFileTool) Description() string                        { return "Write content to a file, overwriting if it exists." }
+func (t *WriteFileTool) Check() bool                                { return true }
+func (t *WriteFileTool) ConcurrencySafe() bool                      { return false }
 func (t *WriteFileTool) RequiresApproval(params map[string]any) bool { return true }
 
 func (t *WriteFileTool) InputSchema() tool.Schema {
@@ -56,8 +56,4 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) (too
 	}
 
 	return tool.ToolResult{Content: fmt.Sprintf("File written: %s (%d bytes)", filePath, len(content))}, nil
-}
-
-func init() {
-	tool.GlobalRegistry.Register(&WriteFileTool{})
 }

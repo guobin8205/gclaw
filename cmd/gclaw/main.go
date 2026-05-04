@@ -30,10 +30,10 @@ import (
 	timetool "github.com/openclaw/gclaw/internal/tool/builtin/timetool"
 
 	// Blank imports trigger tool self-registration via init().
-	_ "github.com/openclaw/gclaw/internal/tool/builtin/file_read"
-	_ "github.com/openclaw/gclaw/internal/tool/builtin/file_write"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/file"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/search"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/todo"
 	"github.com/openclaw/gclaw/internal/tool/builtin/skill_tools"
 	"github.com/openclaw/gclaw/internal/tool/builtin/meta"
 )

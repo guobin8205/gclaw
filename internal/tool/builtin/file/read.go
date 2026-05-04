@@ -1,4 +1,4 @@
-package file_read
+package file
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 // ReadFileTool reads the contents of a file.
 type ReadFileTool struct{}
 
-func (t *ReadFileTool) Name() string        { return "ReadFile" }
-func (t *ReadFileTool) Toolset() string       { return "read" }
-func (t *ReadFileTool) Description() string { return "Read the contents of a file at the given path." }
-func (t *ReadFileTool) Check() bool            { return true }
-func (t *ReadFileTool) ConcurrencySafe() bool  { return true }
+func (t *ReadFileTool) Name() string                              { return "ReadFile" }
+func (t *ReadFileTool) Toolset() string                            { return "file" }
+func (t *ReadFileTool) Description() string                        { return "Read the contents of a file at the given path." }
+func (t *ReadFileTool) Check() bool                                { return true }
+func (t *ReadFileTool) ConcurrencySafe() bool                      { return true }
 func (t *ReadFileTool) RequiresApproval(params map[string]any) bool { return false }
 
 func (t *ReadFileTool) InputSchema() tool.Schema {
