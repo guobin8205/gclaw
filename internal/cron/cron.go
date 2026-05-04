@@ -2,9 +2,14 @@ package cron
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,6 +21,7 @@ type Job struct {
 	Prompt        string    // what to tell the agent
 	Enabled       bool      // can be disabled at runtime
 	NotifyWeixin  bool      // push result to WeChat on completion
+	Script        string    // relative path to script in scripts_dir
 
 	LastRun  time.Time
 	NextRun  time.Time
@@ -35,9 +41,11 @@ type Executor interface {
 
 // Scheduler manages and executes cron jobs on schedule.
 type Scheduler struct {
-	jobs     map[string]*Job
-	executor Executor
-	location *time.Location
+	jobs          map[string]*Job
+	executor      Executor
+	location      *time.Location
+	scriptTimeout time.Duration
+	scriptsDir    string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -46,14 +54,36 @@ type Scheduler struct {
 }
 
 // NewScheduler creates a cron scheduler.
-func NewScheduler(executor Executor) *Scheduler {
+func NewScheduler(executor Executor, opts ...SchedulerOption) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Scheduler{
-		jobs:     make(map[string]*Job),
-		executor: executor,
-		location: time.Local,
-		ctx:      ctx,
-		cancel:   cancel,
+	s := &Scheduler{
+		jobs:          make(map[string]*Job),
+		executor:      executor,
+		location:      time.Local,
+		scriptTimeout: 120 * time.Second,
+		ctx:           ctx,
+		cancel:        cancel,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// SchedulerOption configures a Scheduler.
+type SchedulerOption func(*Scheduler)
+
+// WithScriptTimeout sets the timeout for script execution.
+func WithScriptTimeout(d time.Duration) SchedulerOption {
+	return func(s *Scheduler) {
+		s.scriptTimeout = d
+	}
+}
+
+// WithScriptsDir sets the directory where scripts are located.
+func WithScriptsDir(dir string) SchedulerOption {
+	return func(s *Scheduler) {
+		s.scriptsDir = dir
 	}
 }
 
@@ -171,14 +201,101 @@ func (s *Scheduler) checkDue(now time.Time) {
 	}
 }
 
+func (s *Scheduler) runScript(scriptPath string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if s.scriptsDir != "" {
+		scriptPath = filepath.Join(s.scriptsDir, scriptPath)
+	}
+
+	// Ensure script exists
+	if _, err := os.Stat(scriptPath); err != nil {
+		return "", fmt.Errorf("script not found: %w", err)
+	}
+
+	ext := filepath.Ext(scriptPath)
+	var cmd *exec.Cmd
+	switch ext {
+	case ".py":
+		// Try python3 first, then python
+		if _, err := exec.LookPath("python3"); err == nil {
+			cmd = exec.CommandContext(ctx, "python3", scriptPath)
+		} else if _, err := exec.LookPath("python"); err == nil {
+			cmd = exec.CommandContext(ctx, "python", scriptPath)
+		} else {
+			return "", fmt.Errorf("no python interpreter found")
+		}
+	case ".sh":
+		// Try sh first, then bash
+		if _, err := exec.LookPath("sh"); err == nil {
+			cmd = exec.CommandContext(ctx, "sh", scriptPath)
+		} else if _, err := exec.LookPath("bash"); err == nil {
+			cmd = exec.CommandContext(ctx, "bash", scriptPath)
+		} else {
+			return "", fmt.Errorf("no shell found")
+		}
+	case ".bat", ".cmd":
+		cmd = exec.CommandContext(ctx, "cmd", "/c", scriptPath)
+	default:
+		// For unrecognized extensions, try executing directly if executable
+		cmd = exec.CommandContext(ctx, scriptPath)
+	}
+
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+	if err != nil {
+		return output, fmt.Errorf("script exited with error: %w", err)
+	}
+	return output, nil
+}
+
 func (s *Scheduler) executeJob(job *Job) {
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
 
-	s.executor.Reset()
-	resp, err := s.executor.Submit(ctx, job.Prompt)
-	if err != nil {
-		slog.Error("cron job failed", "name", job.Name, "error", err)
+	var scriptOutput string
+	var skipAgent bool
+
+	if job.Script != "" {
+		out, err := s.runScript(job.Script, s.scriptTimeout)
+		if err != nil {
+			slog.Error("cron script failed", "name", job.Name, "error", err)
+			// Still continue with agent but include error in prompt
+			scriptOutput = fmt.Sprintf("Script error: %v\n%s", err, out)
+		} else {
+			scriptOutput = out
+			// Check wake gate
+			if strings.TrimSpace(scriptOutput) == "" {
+				skipAgent = true
+			} else {
+				lines := strings.Split(strings.TrimSpace(scriptOutput), "\n")
+				lastLine := lines[len(lines)-1]
+				if strings.Contains(lastLine, `"wakeAgent"`) {
+					var wg struct{ WakeAgent bool `json:"wakeAgent"` }
+					if json.Unmarshal([]byte(lastLine), &wg) == nil && !wg.WakeAgent {
+						skipAgent = true
+					}
+				}
+			}
+		}
+	}
+
+	var resp string
+	if !skipAgent {
+		prompt := job.Prompt
+		if scriptOutput != "" {
+			prompt = fmt.Sprintf("%s\n\n## Script Output\n%s", prompt, scriptOutput)
+		}
+		s.executor.Reset()
+		var err error
+		resp, err = s.executor.Submit(ctx, prompt)
+		if err != nil {
+			slog.Error("cron job failed", "name", job.Name, "error", err)
+		}
+	} else {
+		resp = scriptOutput
+		slog.Info("cron job skipped agent (no-agent mode)", "name", job.Name)
 	}
 
 	job.mu.Lock()
@@ -188,7 +305,7 @@ func (s *Scheduler) executeJob(job *Job) {
 	job.mu.Unlock()
 
 	if resp != "" {
-		slog.Info("cron job completed", "name", job.Name, "response_len", len(resp))
+		slog.Info("cron job completed", "name", job.Name, "response_len", len(resp), "no_agent", skipAgent)
 		if job.OnResult != nil {
 			job.OnResult(job.Name, job.Prompt, resp)
 		}

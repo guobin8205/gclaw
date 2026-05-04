@@ -2,6 +2,10 @@ package cron
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -229,4 +233,128 @@ func TestSchedulerStartStop(t *testing.T) {
 		t.Error("expected at least 1 execution")
 	}
 	t.Logf("executed %d times", count)
+}
+
+func writeTestScript(t *testing.T, tmpDir, name, content string) string {
+	t.Helper()
+	var scriptName string
+	var scriptContent string
+	if runtime.GOOS == "windows" {
+		scriptName = name + ".bat"
+		scriptContent = "@echo off\r\n" + content + "\r\n"
+	} else {
+		scriptName = name + ".sh"
+		scriptContent = "#!/bin/sh\n" + content + "\n"
+	}
+	scriptPath := filepath.Join(tmpDir, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("failed to write test script: %v", err)
+	}
+	return scriptName
+}
+
+func TestScriptWakeGateFalseSkipsAgent(t *testing.T) {
+	exec := &mockExecutor{}
+	s := NewScheduler(exec)
+
+	tmpDir := t.TempDir()
+	scriptName := writeTestScript(t, tmpDir, "skip", `echo {"wakeAgent": false}`)
+
+	s.scriptsDir = tmpDir
+	s.scriptTimeout = 5 * time.Second
+
+	job := &Job{Enabled: true, Name: "skip-agent", Schedule: "* * * * *", Prompt: "check", Script: scriptName}
+	s.AddJob(job)
+
+	// Directly execute job
+	s.executeJob(job)
+
+	exec.mu.Lock()
+	count := len(exec.results)
+	exec.mu.Unlock()
+	if count != 0 {
+		t.Errorf("expected agent to be skipped, got %d executor calls", count)
+	}
+}
+
+func TestScriptEmptyOutputSkipsAgent(t *testing.T) {
+	exec := &mockExecutor{}
+	s := NewScheduler(exec)
+
+	tmpDir := t.TempDir()
+	scriptName := writeTestScript(t, tmpDir, "empty", "echo.")
+
+	s.scriptsDir = tmpDir
+	s.scriptTimeout = 5 * time.Second
+
+	job := &Job{Enabled: true, Name: "empty-agent", Schedule: "* * * * *", Prompt: "check", Script: scriptName}
+	s.AddJob(job)
+
+	s.executeJob(job)
+
+	exec.mu.Lock()
+	count := len(exec.results)
+	exec.mu.Unlock()
+	if count != 0 {
+		t.Errorf("expected agent to be skipped, got %d executor calls", count)
+	}
+}
+
+func TestScriptNormalOutputInjectsPrompt(t *testing.T) {
+	exec := &mockExecutor{}
+	s := NewScheduler(exec)
+
+	tmpDir := t.TempDir()
+	var reportContent string
+	if runtime.GOOS == "windows" {
+		reportContent = "echo CPU: 45%%"
+	} else {
+		reportContent = "echo CPU: 45%"
+	}
+	scriptName := writeTestScript(t, tmpDir, "report", reportContent)
+
+	s.scriptsDir = tmpDir
+	s.scriptTimeout = 5 * time.Second
+
+	job := &Job{Enabled: true, Name: "report-agent", Schedule: "* * * * *", Prompt: "analyze", Script: scriptName}
+	s.AddJob(job)
+
+	s.executeJob(job)
+
+	last := exec.lastPrompt()
+	if last == "" {
+		t.Fatal("expected executor to be called")
+	}
+	if !strings.Contains(last, "Script Output") || !strings.Contains(last, "CPU: 45%") {
+		t.Errorf("expected prompt to contain script output, got: %s", last)
+	}
+}
+
+func TestScriptFailureStillRunsAgent(t *testing.T) {
+	exec := &mockExecutor{}
+	s := NewScheduler(exec)
+
+	tmpDir := t.TempDir()
+	var scriptName string
+	if runtime.GOOS == "windows" {
+		scriptName = writeTestScript(t, tmpDir, "fail", "echo partial output\r\nexit /b 1")
+	} else {
+		scriptName = writeTestScript(t, tmpDir, "fail", "echo partial output\nexit 1")
+	}
+
+	s.scriptsDir = tmpDir
+	s.scriptTimeout = 5 * time.Second
+
+	job := &Job{Enabled: true, Name: "fail-agent", Schedule: "* * * * *", Prompt: "check", Script: scriptName}
+	s.AddJob(job)
+
+	s.executeJob(job)
+
+	last := exec.lastPrompt()
+	if last == "" {
+		t.Fatal("expected executor to be called after script failure")
+	}
+	if !strings.Contains(last, "Script error:") || !strings.Contains(last, "partial output") {
+		t.Errorf("expected prompt to contain script error info, got: %s", last)
+	}
 }
