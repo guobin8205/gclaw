@@ -51,6 +51,7 @@ import (
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/vision"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/image"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/tts"
+	_ "github.com/openclaw/gclaw/internal/tool/builtin/codeexec"
 	"github.com/openclaw/gclaw/internal/tool/builtin/skill_tools"
 	"github.com/openclaw/gclaw/internal/tool/builtin/meta"
 )
