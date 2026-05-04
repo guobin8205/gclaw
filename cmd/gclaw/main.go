@@ -41,15 +41,16 @@ import (
 	browsertool "github.com/openclaw/gclaw/internal/tool/builtin/browser"
 	mcptool "github.com/openclaw/gclaw/internal/tool/builtin/mcp"
 	"github.com/openclaw/gclaw/internal/browser"
+	"github.com/openclaw/gclaw/internal/checkpoint"
 	"github.com/openclaw/gclaw/internal/mcp"
 
 	// Blank imports trigger tool self-registration via init().
-	_ "github.com/openclaw/gclaw/internal/tool/builtin/file"
+	filetool "github.com/openclaw/gclaw/internal/tool/builtin/file"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/clarify"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/memory"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/search"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/session"
-	_ "github.com/openclaw/gclaw/internal/tool/builtin/shell"
+	shelltool "github.com/openclaw/gclaw/internal/tool/builtin/shell"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/todo"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/web"
 	_ "github.com/openclaw/gclaw/internal/tool/builtin/vision"
@@ -331,7 +332,20 @@ func runREPL() {
 			Autonomy:     agent.Interactive,
 			Permissions:  permChecker,
 		})
-		cronSched = cron.NewScheduler(cronAgent)
+		scriptTimeout, err := config.Duration(cfg.Cron.ScriptTimeout)
+		if err != nil {
+			scriptTimeout = 120 * time.Second
+		}
+		scriptsDir := cfg.Cron.ScriptsDir
+		if scriptsDir == "" {
+			scriptsDir = config.ExpandPath("~/.gclaw/scripts")
+		}
+		os.MkdirAll(scriptsDir, 0755)
+
+		cronSched = cron.NewScheduler(cronAgent,
+			cron.WithScriptTimeout(scriptTimeout),
+			cron.WithScriptsDir(scriptsDir),
+		)
 
 		for _, j := range cfg.Cron.Jobs {
 			job := &cron.Job{
@@ -340,6 +354,7 @@ func runREPL() {
 				Prompt:       j.Prompt,
 				Enabled:      j.Enabled,
 				NotifyWeixin: j.NotifyWeixin,
+				Script:       j.Script,
 			}
 
 			// Wire WeChat notification if configured.
@@ -472,6 +487,15 @@ func runREPL() {
 			mcptool.ManagerRef = mgr
 			slog.Info("mcp: configured servers", "count", len(cfg.MCP.Servers))
 		}
+
+		// Wire checkpoint manager
+		if cfg.Checkpoint.Enabled {
+			cpMgr := checkpoint.NewManager(true, cfg.Checkpoint.MaxSnapshots, config.ExpandPath("~/.gclaw/checkpoints"))
+			filetool.CheckpointManager = cpMgr
+			shelltool.CheckpointManager = cpMgr
+			slog.Info("checkpoint manager enabled", "max_snapshots", cfg.Checkpoint.MaxSnapshots)
+		}
+
 		// Setup autonomous scheduler for semi/full modes
 	var scheduler *autonomous.Scheduler
 	if autonomyLevel >= agent.SemiAutonomous {
@@ -769,7 +793,7 @@ func resolveProviderType(name string) string {
 		return "claude"
 	case "openai":
 		return "openai"
-	case "deepseek", "zhipu", "qianfan", "moonshot":
+	case "deepseek", "zhipu", "qianfan", "moonshot", "ark", "doubao", "kimi":
 		return "openai-compatible"
 	case "ollama":
 		return "ollama"

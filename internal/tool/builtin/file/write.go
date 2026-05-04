@@ -9,6 +9,11 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 )
 
+// CheckpointManager is injected by main.go when checkpointing is enabled.
+var CheckpointManager interface {
+	EnsureCheckpoint(dir string, reason string) error
+}
+
 // WriteFileTool creates or overwrites a file with content.
 type WriteFileTool struct{}
 
@@ -41,6 +46,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) (too
 	}
 
 	dir := filepath.Dir(filePath)
+	if CheckpointManager != nil {
+		_ = CheckpointManager.EnsureCheckpoint(dir, "write_file: "+filePath)
+	}
+
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return tool.ToolResult{
 			Content: fmt.Sprintf("Error creating directory %s: %v", dir, err),

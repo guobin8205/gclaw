@@ -31,13 +31,16 @@ type Config struct {
 	Logging    LoggingConfig    `yaml:"logging"`
 	WebSearch  WebSearchConfig  `yaml:"websearch"`
 	MCP        MCPConfig        `yaml:"mcp"`
+	Checkpoint CheckpointConfig `yaml:"checkpoint"`
 }
 
 // CronConfig holds scheduled job configuration.
 type CronConfig struct {
-	Enabled bool      `yaml:"enabled"`
-	Model   string    `yaml:"model"`
-	Jobs    []CronJob `yaml:"jobs"`
+	Enabled       bool      `yaml:"enabled"`
+	Model         string    `yaml:"model"`
+	ScriptTimeout string    `yaml:"script_timeout"` // e.g. "120s"
+	ScriptsDir    string    `yaml:"scripts_dir"`    // default ~/.gclaw/scripts
+	Jobs          []CronJob `yaml:"jobs"`
 }
 
 // CronJob is a single scheduled task.
@@ -47,6 +50,7 @@ type CronJob struct {
 	Prompt        string `yaml:"prompt"`
 	Enabled       bool   `yaml:"enabled"`
 	NotifyWeixin  bool   `yaml:"notify_weixin"`
+	Script        string `yaml:"script"`
 }
 
 // ChannelsConfig holds messaging channel configuration.
@@ -200,6 +204,12 @@ type LoggingConfig struct {
 	OtelEndpoint string `yaml:"otel_endpoint"`
 }
 
+// CheckpointConfig holds checkpoint/snapshot configuration.
+type CheckpointConfig struct {
+	Enabled      bool `yaml:"enabled"`
+	MaxSnapshots int  `yaml:"max_snapshots"`
+}
+
 // MCPConfig holds MCP (Model Context Protocol) client configuration.
 type MCPConfig struct {
 	Servers []MCPServerConfig `yaml:"servers"`
@@ -260,6 +270,13 @@ func Defaults() Config {
 		},
 		Logging: LoggingConfig{
 			Level: "info",
+		},
+		Cron: CronConfig{
+			ScriptTimeout: "120s",
+		},
+		Checkpoint: CheckpointConfig{
+			Enabled:      false,
+			MaxSnapshots: 50,
 		},
 	}
 }
@@ -371,6 +388,12 @@ func merge(dst *Config, src Config) {
 	if src.Cron.Enabled {
 		dst.Cron.Enabled = true
 	}
+	if src.Cron.ScriptTimeout != "" {
+		dst.Cron.ScriptTimeout = src.Cron.ScriptTimeout
+	}
+	if src.Cron.ScriptsDir != "" {
+		dst.Cron.ScriptsDir = src.Cron.ScriptsDir
+	}
 	if len(src.Cron.Jobs) > 0 {
 		dst.Cron.Jobs = src.Cron.Jobs
 	}
@@ -442,6 +465,13 @@ func merge(dst *Config, src Config) {
 	// MCP merge
 	if len(src.MCP.Servers) > 0 {
 		dst.MCP.Servers = src.MCP.Servers
+	}
+	// Checkpoint merge
+	if src.Checkpoint.Enabled {
+		dst.Checkpoint.Enabled = true
+	}
+	if src.Checkpoint.MaxSnapshots != 0 {
+		dst.Checkpoint.MaxSnapshots = src.Checkpoint.MaxSnapshots
 	}
 }
 

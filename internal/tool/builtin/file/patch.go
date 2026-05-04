@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/openclaw/gclaw/internal/tool"
@@ -53,6 +54,11 @@ func (t *PatchTool) Execute(ctx context.Context, params map[string]any) (tool.To
 		if b, ok := v.(bool); ok {
 			replaceAll = b
 		}
+	}
+
+	// Checkpoint before modifying
+	if CheckpointManager != nil {
+		_ = CheckpointManager.EnsureCheckpoint(filepath.Dir(filePath), "patch: "+filePath)
 	}
 
 	// Read the file

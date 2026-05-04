@@ -11,9 +11,25 @@ import (
 	"github.com/openclaw/gclaw/internal/tool"
 )
 
+// CheckpointManager is injected by main.go when checkpointing is enabled.
+var CheckpointManager interface {
+	EnsureCheckpoint(dir string, reason string) error
+}
+
 // BashTool executes shell commands.
 type BashTool struct {
 	DefaultTimeout time.Duration
+}
+
+func isDestructive(command string) bool {
+	destructive := []string{"rm ", "rm\t", "mv ", "mv\t", "git checkout", "git reset", "git clean"}
+	lower := strings.ToLower(command)
+	for _, d := range destructive {
+		if strings.Contains(lower, d) {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *BashTool) Name() string  { return "Bash" }
@@ -65,6 +81,10 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (tool.Too
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if CheckpointManager != nil && isDestructive(command) {
+		_ = CheckpointManager.EnsureCheckpoint(".", "bash: "+command)
+	}
 
 	shell := resolveShell()
 
