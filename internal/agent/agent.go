@@ -61,6 +61,13 @@ func New(cfg Config) *Agent {
 	}
 }
 
+// SetModel replaces the agent's model at runtime.
+func (a *Agent) SetModel(m model.Model) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cfg.Model = m
+}
+
 // Reset clears the conversation history for a fresh start.
 func (a *Agent) Reset() {
 	a.messages = nil

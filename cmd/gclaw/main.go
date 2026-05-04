@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -394,6 +396,7 @@ func runREPL() {
 	}
 
 	// Setup delegate dispatcher and meta tool references
+	var mcpMgr *mcp.Manager
 	if cfg.Delegate.Enabled {
 		factory := func() delegate.AgentRunner {
 			return agent.New(agent.Config{
@@ -475,16 +478,16 @@ func runREPL() {
 
 		// Wire MCP client (optional)
 		if len(cfg.MCP.Servers) > 0 {
-			mgr := mcp.NewManager()
+			mcpMgr = mcp.NewManager()
 			for _, srv := range cfg.MCP.Servers {
-				mgr.AddServer(mcp.ServerConfig{
+				mcpMgr.AddServer(mcp.ServerConfig{
 					Name:    srv.Name,
 					Command: srv.Command,
 					URL:     srv.URL,
 					Env:     srv.Env,
 				})
 			}
-			mcptool.ManagerRef = mgr
+			mcptool.ManagerRef = mcpMgr
 			slog.Info("mcp: configured servers", "count", len(cfg.MCP.Servers))
 		}
 
@@ -570,7 +573,21 @@ func runREPL() {
 
 		// Handle slash commands
 		if strings.HasPrefix(input, "/") {
-			handleCommand(input, cfg, ctxManager, taskMgr, ag, scheduler, cronSched, weixinCh)
+			handleCommand(input, &cmdCtx{
+				cfg:             cfg,
+				ctxMgr:          ctxManager,
+				taskMgr:         taskMgr,
+				ag:              ag,
+				scheduler:       scheduler,
+				cronSched:       cronSched,
+				weixinCh:        weixinCh,
+				providerFactory: providerFactory,
+				memoryMgr:       memoryMgr,
+				sessionStore:    sessionStore,
+				skillMgr:        skillMgr,
+				mcpMgr:          mcpMgr,
+				gw:              gw,
+			})
 			continue
 		}
 
@@ -617,69 +634,78 @@ func runREPL() {
 	}
 }
 
-func handleCommand(cmd string, cfg *config.Config, ctxMgr *context.Manager, taskMgr *task.Manager, ag *agent.Agent, scheduler *autonomous.Scheduler, cronSched *cron.Scheduler, weixinCh *weixin.Channel) {
+// cmdCtx holds all runtime dependencies needed by slash commands.
+type cmdCtx struct {
+	cfg             *config.Config
+	ctxMgr          *context.Manager
+	taskMgr         *task.Manager
+	ag              *agent.Agent
+	scheduler       *autonomous.Scheduler
+	cronSched       *cron.Scheduler
+	weixinCh        *weixin.Channel
+	providerFactory *provider.Factory
+	memoryMgr       *memory.Manager
+	sessionStore    session.Store
+	skillMgr        *skill.Manager
+	mcpMgr          *mcp.Manager
+	gw              *gateway.Gateway
+}
+
+func handleCommand(cmd string, c *cmdCtx) {
+	args := strings.Fields(cmd)
 	switch {
+	// ---- Help ----
 	case cmd == "/help":
 		fmt.Println(`
-Commands:
-  /help        Show this help
-  /stats       Show context and usage stats
-  /autonomy    Show autonomous scheduler stats
-  /cron        Show cron job status
-  /weixin      WeChat channel: login|logout|status
-  /tasks       List running tasks
-  /config      Show current config
-  /compact     Force context compaction
-  /interrupt   Inject a message into the running agent (autonomous mode)
-  /clear       Clear conversation
-  /exit        Exit gclaw`)
-	case cmd == "/stats":
-		fmt.Println("\n--- Context Stats ---")
-		fmt.Println(ctxMgr.UsageStats())
-		fmt.Println("--- Model Stats ---")
-		fmt.Printf("Input tokens: %d\n", ag.Usage().InputTokens)
-		fmt.Printf("Output tokens: %d\n", ag.Usage().OutputTokens)
-	case cmd == "/cron":
-		if cronSched != nil {
-			jobs := cronSched.Jobs()
-			fmt.Printf("\n--- Cron Jobs (%d) ---\n", len(jobs))
-			for _, j := range jobs {
-				fmt.Printf("  %s:\n", j.Name)
-				fmt.Printf("    schedule: %s\n", j.Schedule)
-				fmt.Printf("    next_run: %s\n", j.NextRun.Format("15:04:05"))
-				fmt.Printf("    run_count: %d\n", j.RunCount)
-				fmt.Printf("    notify_weixin: %v\n", j.NotifyWeixin)
-			}
-		} else {
-			fmt.Println("Cron scheduler is not active (add cron.jobs in config)")
-		}
-	case strings.HasPrefix(cmd, "/weixin"):
-		if weixinCh == nil {
-			fmt.Println("微信通道未启用 (设置 channels.weixin.enabled: true)")
-		} else {
-			handleWeixinCommand(cmd, weixinCh)
-		}
-	case cmd == "/autonomy":
-		if scheduler != nil {
-			stats := scheduler.Stats()
-			fmt.Println("\n--- Autonomous Scheduler ---")
-			for k, v := range stats {
-				fmt.Printf("%s: %v\n", k, v)
-			}
-		} else {
-			fmt.Println("Autonomous mode is not active (set agent.autonomy: semi or full in config)")
-		}
-	case cmd == "/tasks":
-		tasks := taskMgr.List()
-		fmt.Printf("\n%d tasks:\n", len(tasks))
-		for _, t := range tasks {
-			fmt.Printf("  [%s] %s %s\n", t.Status, t.Type, t.Description)
-		}
+Session:
+  /clear             Clear conversation and reset
+  /compact           Force context compaction
+  /interrupt <msg>   Inject message into running agent
+
+Info:
+  /help              Show this help
+  /version           Show version
+  /status            Show comprehensive status panel
+  /stats             Show context and token usage
+  /config            Show current configuration
+  /model [name]      Show or switch active model
+  /fallback          Show fallback model chain
+  /tools [all]       List registered tools
+
+Subsystems:
+  /skills            List loaded skills
+  /memory [list|clear]  Manage persistent memory
+  /sessions          List session history
+  /mcp               Show MCP server status
+  /cron [run|pause|resume] <name>  Manage cron jobs
+  /tasks             List running tasks
+
+Channels:
+  /weixin login|logout|status  WeChat channel
+  /gateway           Show gateway platform status
+
+Diagnostics:
+  /doctor            Run system health checks
+  /debug             Toggle debug logging
+  /dump              Export state snapshot to file
+  /backup            Backup ~/.gclaw directory
+
+Scheduling:
+  /autonomy          Show autonomous scheduler stats
+
+Exit:
+  /exit              Exit gclaw`)
+
+	// ---- Session ----
+	case cmd == "/clear":
+		c.ctxMgr.Reset()
+		c.ag.Reset()
+		fmt.Println("Conversation cleared.")
 	case cmd == "/compact":
-		ctxMgr.Compact(10)
+		c.ctxMgr.Compact(10)
 		fmt.Println("Context compacted.")
 	case strings.HasPrefix(cmd, "/interrupt"):
-		if !ag.IsBusy() {
+		if !c.ag.IsBusy() {
 			fmt.Println("Agent is not currently running.")
 			break
 		}
@@ -688,31 +714,472 @@ Commands:
 			fmt.Println("Usage: /interrupt <message>")
 			break
 		}
-		ag.Interrupt(msg)
+		c.ag.Interrupt(msg)
 		fmt.Printf("Interrupt sent: %q\n", msg)
+
+	// ---- Info ----
+	case cmd == "/version":
+		fmt.Printf("gclaw version %s\n", Version)
+	case cmd == "/status":
+		fmt.Println("\n--- gclaw Status ---")
+		fmt.Printf("Version:    %s\n", Version)
+		fmt.Printf("Model:      %s\n", c.cfg.Model.Default)
+		fmt.Printf("Autonomy:   %s\n", c.cfg.Agent.Autonomy)
+		fmt.Printf("Permission: %s\n", c.cfg.Permission.Mode)
+		fmt.Println()
+		fmt.Println("--- Tokens ---")
+		u := c.ag.Usage()
+		fmt.Printf("Input:  %d\n", u.InputTokens)
+		fmt.Printf("Output: %d\n", u.OutputTokens)
+		fmt.Println()
+		fmt.Println(c.ctxMgr.UsageStats())
+			fmt.Println("--- Subsystems ---")
+			fmt.Printf("Memory:     %s\n", boolStr(c.memoryMgr != nil, "enabled", "disabled"))
+			skillCount := 0
+			if c.skillMgr != nil { skillCount = len(c.skillMgr.List()) }
+			fmt.Printf("Skills:     %s\n", boolStr(c.skillMgr != nil, countStr(skillCount, "loaded"), "disabled"))
+			fmt.Printf("Checkpoint: %s\n", boolStr(c.cfg.Checkpoint.Enabled, "enabled", "disabled"))
+			cronJobs := 0
+			if c.cronSched != nil { cronJobs = len(c.cronSched.Jobs()) }
+			fmt.Printf("Cron:       %s\n", boolStr(c.cronSched != nil, countStr(cronJobs, "jobs"), "disabled"))
+			fmt.Printf("Gateway:    %s\n", boolStr(c.gw != nil, "enabled", "disabled"))
+			fmt.Printf("WeChat:     %s\n", weixinStatusStr(c.weixinCh))
+			mcpServers := 0
+			if c.mcpMgr != nil { mcpServers = len(c.mcpMgr.ListServers()) }
+			fmt.Printf("MCP:        %s\n", boolStr(c.mcpMgr != nil, countStr(mcpServers, "servers"), "disabled"))
+			fmt.Printf("Session:    %s\n", boolStr(c.sessionStore != nil, "enabled", "disabled"))
+	case cmd == "/stats":
+		fmt.Println("\n--- Context Stats ---")
+		fmt.Println(c.ctxMgr.UsageStats())
+		fmt.Println("--- Model Stats ---")
+		fmt.Printf("Input tokens: %d\n", c.ag.Usage().InputTokens)
+		fmt.Printf("Output tokens: %d\n", c.ag.Usage().OutputTokens)
 	case cmd == "/config":
 		fmt.Println("\n--- Config ---")
-		fmt.Printf("Model: %s\n", cfg.Model.Default)
-		fmt.Printf("Fallback: %v\n", cfg.Model.Fallback)
-		fmt.Printf("Autonomy: %s\n", cfg.Agent.Autonomy)
-		fmt.Printf("Max turns: %d\n", cfg.Agent.MaxTurns)
-		fmt.Printf("Permission: %s\n", cfg.Permission.Mode)
-	case cmd == "/clear":
-		ctxMgr.Reset()
-		ag.Reset()
-		fmt.Println("Conversation cleared.")
-	case cmd == "/exit":
-		if scheduler != nil {
-			scheduler.Stop()
+		fmt.Printf("Model: %s\n", c.cfg.Model.Default)
+		fmt.Printf("Fallback: %v\n", c.cfg.Model.Fallback)
+		fmt.Printf("Autonomy: %s\n", c.cfg.Agent.Autonomy)
+		fmt.Printf("Max turns: %d\n", c.cfg.Agent.MaxTurns)
+		fmt.Printf("Permission: %s\n", c.cfg.Permission.Mode)
+		fmt.Printf("Context max_tokens: %d\n", c.cfg.Context.MaxTokens)
+		fmt.Printf("Checkpoint: %v\n", c.cfg.Checkpoint.Enabled)
+		fmt.Printf("Delegate: %v\n", c.cfg.Delegate.Enabled)
+	case cmd == "/model":
+		fmt.Printf("\nCurrent model: %s\n", c.cfg.Model.Default)
+		fmt.Println("\nAvailable models:")
+		for _, name := range c.providerFactory.Names() {
+			marker := ""
+			if name == c.cfg.Model.Default {
+				marker = " (active)"
+			}
+			fmt.Printf("  %s%s\n", name, marker)
 		}
-		if weixinCh != nil {
-			weixinCh.Stop()
+	case strings.HasPrefix(cmd, "/model "):
+		name := strings.TrimSpace(strings.TrimPrefix(cmd, "/model "))
+		m, err := c.providerFactory.Build(name)
+		if err != nil {
+			fmt.Printf("Error: model %q not available: %v\n", name, err)
+			break
+		}
+		c.ag.SetModel(m)
+		c.cfg.Model.Default = name
+		fmt.Printf("Switched to model: %s\n", name)
+	case cmd == "/fallback":
+		fmt.Println("\n--- Fallback Chain ---")
+		if len(c.cfg.Model.Fallback) == 0 {
+			fmt.Println("  (none configured)")
+		}
+		for i, name := range c.cfg.Model.Fallback {
+			fmt.Printf("  %d. %s\n", i+1, name)
+		}
+	case strings.HasPrefix(cmd, "/fallback "):
+		models := strings.Fields(strings.TrimPrefix(cmd, "/fallback "))
+		c.cfg.Model.Fallback = models
+		fmt.Printf("Fallback chain updated: %v\n", models)
+
+	case cmd == "/tools":
+		listTools(c, false)
+	case cmd == "/tools all":
+		listTools(c, true)
+
+	// ---- Subsystems ----
+	case cmd == "/skills":
+		if c.skillMgr == nil {
+			fmt.Println("Skills system is not enabled (set skills.enabled: true)")
+			break
+		}
+		skills := c.skillMgr.List()
+		fmt.Printf("\n--- Skills (%d) ---\n", len(skills))
+		for _, s := range skills {
+			fmt.Printf("  %-20s [%s]\n", s.Name, s.Source)
+		}
+	case cmd == "/memory":
+		if c.memoryMgr == nil {
+			fmt.Println("Memory system is not enabled (set memory.enabled: true)")
+			break
+		}
+		memDir := c.cfg.Memory.Dir
+		if memDir == "" {
+			memDir = config.ExpandPath("~/.gclaw/memory")
+		}
+		files, _ := os.ReadDir(memDir)
+		fmt.Printf("\n--- Memory ---\n")
+		fmt.Printf("Directory: %s\n", memDir)
+		fmt.Printf("Entries: %d\n", len(files))
+	case cmd == "/memory list":
+		if c.memoryMgr == nil {
+			fmt.Println("Memory system is not enabled")
+			break
+		}
+		memDir := c.cfg.Memory.Dir
+		if memDir == "" {
+			memDir = config.ExpandPath("~/.gclaw/memory")
+		}
+		entries, _ := os.ReadDir(memDir)
+		fmt.Printf("\n--- Memory Entries (%d) ---\n", len(entries))
+		for _, e := range entries {
+			fmt.Printf("  %s\n", e.Name())
+		}
+	case cmd == "/memory clear":
+		if c.memoryMgr == nil {
+			fmt.Println("Memory system is not enabled")
+			break
+		}
+		memDir := c.cfg.Memory.Dir
+		if memDir == "" {
+			memDir = config.ExpandPath("~/.gclaw/memory")
+		}
+		entries, _ := os.ReadDir(memDir)
+		for _, e := range entries {
+			os.Remove(filepath.Join(memDir, e.Name()))
+		}
+		fmt.Printf("Cleared %d memory entries.\n", len(entries))
+	case cmd == "/sessions":
+		if c.sessionStore == nil {
+			fmt.Println("Session store is not enabled (set session.enabled: true)")
+			break
+		}
+		sessions, err := c.sessionStore.ListSessions()
+		if err != nil {
+			fmt.Printf("Error listing sessions: %v\n", err)
+			break
+		}
+		fmt.Printf("\n--- Sessions (%d) ---\n", len(sessions))
+		for _, s := range sessions {
+			fmt.Printf("  %s  agent=%s  msgs=%d  tokens=%d  %s\n",
+				s.ID[:8], s.AgentType, s.MsgCount, s.TokenEst,
+				s.StartTime.Format("01-02 15:04"))
+		}
+	case cmd == "/mcp":
+		if c.mcpMgr == nil {
+			fmt.Println("MCP is not configured (add mcp.servers in config)")
+			break
+		}
+		servers := c.mcpMgr.ListServers()
+		statuses := c.mcpMgr.ServerStatus()
+		fmt.Printf("\n--- MCP Servers (%d) ---\n", len(servers))
+		for _, name := range servers {
+			connected := statuses[name]
+			fmt.Printf("  %-20s %s\n", name, boolStr(connected, "connected", "disconnected"))
+		}
+
+	// ---- Cron (extended) ----
+	case cmd == "/cron":
+		cmdCronList(c)
+	case len(args) >= 3 && args[0] == "/cron":
+		cmdCronSubcommand(c, args[1], args[2:])
+
+	// ---- Tasks ----
+	case cmd == "/tasks":
+		tasks := c.taskMgr.List()
+		fmt.Printf("\n%d tasks:\n", len(tasks))
+		for _, t := range tasks {
+			fmt.Printf("  [%s] %s %s\n", t.Status, t.Type, t.Description)
+		}
+
+	// ---- Channels ----
+	case strings.HasPrefix(cmd, "/weixin"):
+		if c.weixinCh == nil {
+			fmt.Println("微信通道未启用 (设置 channels.weixin.enabled: true)")
+		} else {
+			handleWeixinCommand(cmd, c.weixinCh)
+		}
+	case cmd == "/gateway":
+		if c.gw == nil {
+			fmt.Println("Gateway is not enabled (set gateway.enabled: true)")
+			break
+		}
+		statuses := c.gw.Statuses()
+		fmt.Println("\n--- Gateway Platforms ---")
+		for name, st := range statuses {
+			fmt.Printf("  %-10s connected=%v\n", name, st.Connected)
+		}
+
+	// ---- Diagnostics ----
+	case cmd == "/doctor":
+		cmdDoctor(c)
+	case cmd == "/debug":
+		cmdDebug()
+	case cmd == "/dump":
+		cmdDump(c)
+	case cmd == "/backup":
+		cmdBackup()
+
+	// ---- Scheduling ----
+	case cmd == "/autonomy":
+		if c.scheduler != nil {
+			stats := c.scheduler.Stats()
+			fmt.Println("\n--- Autonomous Scheduler ---")
+			for k, v := range stats {
+				fmt.Printf("%s: %v\n", k, v)
+			}
+		} else {
+			fmt.Println("Autonomous mode is not active (set agent.autonomy: semi or full in config)")
+		}
+
+	// ---- Exit ----
+	case cmd == "/exit":
+		if c.scheduler != nil {
+			c.scheduler.Stop()
+		}
+		if c.weixinCh != nil {
+			c.weixinCh.Stop()
 		}
 		os.Exit(0)
+
 	default:
 		fmt.Printf("Unknown command: %s (type /help)\n", cmd)
 	}
 }
+
+func listTools(c *cmdCtx, verbose bool) {
+	tools := tool.GlobalRegistry.AllTools()
+	toolsets := tool.GlobalRegistry.Toolsets()
+	fmt.Printf("\n--- Tools (%d, %d toolsets) ---\n", len(tools), len(toolsets))
+
+	if verbose {
+		for _, t := range tools {
+			fmt.Printf("  %-18s [%s] %s\n", t.Name(), t.Toolset(), t.Description())
+		}
+	} else {
+		prev := ""
+		for _, t := range tools {
+			if t.Toolset() != prev {
+				fmt.Printf("\n  [%s]\n", t.Toolset())
+				prev = t.Toolset()
+			}
+			fmt.Printf("    %s\n", t.Name())
+		}
+	}
+}
+
+func cmdCronList(c *cmdCtx) {
+	if c.cronSched == nil {
+		fmt.Println("Cron scheduler is not active (add cron.jobs in config)")
+		return
+	}
+	jobs := c.cronSched.Jobs()
+	fmt.Printf("\n--- Cron Jobs (%d) ---\n", len(jobs))
+	for _, j := range jobs {
+		status := "enabled"
+		if !j.Enabled {
+			status = "paused"
+		}
+		fmt.Printf("  %s [%s]\n", j.Name, status)
+		fmt.Printf("    schedule: %s\n", j.Schedule)
+		fmt.Printf("    next_run: %s\n", j.NextRun.Format("15:04:05"))
+		fmt.Printf("    run_count: %d\n", j.RunCount)
+		if j.Script != "" {
+			fmt.Printf("    script: %s\n", j.Script)
+		}
+	}
+}
+
+func cmdCronSubcommand(c *cmdCtx, sub string, nameArgs []string) {
+	if c.cronSched == nil {
+		fmt.Println("Cron scheduler is not active")
+		return
+	}
+	if len(nameArgs) == 0 {
+		fmt.Printf("Usage: /cron %s <name>\n", sub)
+		return
+	}
+	name := nameArgs[0]
+	switch sub {
+	case "run":
+		result, err := c.cronSched.RunNow(stdctx.Background(), name)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			break
+		}
+		fmt.Printf("Job %q executed:\n%s\n", name, result)
+	case "pause":
+		if err := c.cronSched.PauseJob(name); err != nil {
+			fmt.Printf("Error: %v\n", err)
+		} else {
+			fmt.Printf("Job %q paused.\n", name)
+		}
+	case "resume":
+		if err := c.cronSched.ResumeJob(name); err != nil {
+			fmt.Printf("Error: %v\n", err)
+		} else {
+			fmt.Printf("Job %q resumed.\n", name)
+		}
+	default:
+		fmt.Printf("Unknown cron subcommand: %s (run|pause|resume)\n", sub)
+	}
+}
+
+func cmdDoctor(c *cmdCtx) {
+	fmt.Println("\n--- gclaw Doctor ---")
+	ok := true
+
+	// Check config
+	userPath, _ := config.UserConfigPath()
+	if _, err := os.Stat(userPath); err == nil {
+		fmt.Printf("  Config file:       OK (%s)\n", userPath)
+	} else {
+		fmt.Println("  Config file:       MISSING (using defaults)")
+	}
+
+	// Check model connectivity
+	models := c.providerFactory.Names()
+	fmt.Printf("  Registered models: %d (%v)\n", len(models), models)
+	if m, err := c.providerFactory.Build(c.cfg.Model.Default); err != nil {
+		fmt.Printf("  Default model:     FAIL (%v)\n", err)
+		ok = false
+	} else {
+		fmt.Printf("  Default model:     OK (%s, max_tokens=%d)\n", m.ID(), m.MaxTokens())
+	}
+
+	// Check memory dir
+	memDir := config.ExpandPath("~/.gclaw")
+	if fi, err := os.Stat(memDir); err == nil && fi.IsDir() {
+		fmt.Printf("  Data directory:    OK (%s)\n", memDir)
+	} else {
+		fmt.Println("  Data directory:    MISSING")
+		ok = false
+	}
+
+	// Check disk space
+	if home, err := os.UserHomeDir(); err == nil {
+		if usage, err := getDiskUsage(home); err == nil {
+			fmt.Printf("  Disk usage:        %s\n", usage)
+		}
+	}
+
+	if ok {
+		fmt.Println("\n  All checks passed.")
+	} else {
+		fmt.Println("\n  Some checks failed.")
+	}
+}
+
+func cmdDebug() {
+	current := slog.Default().Enabled(stdctx.Background(), slog.LevelDebug)
+	if current {
+		slog.SetLogLoggerLevel(slog.LevelInfo)
+		fmt.Println("Debug logging: OFF (level=info)")
+	} else {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+		fmt.Println("Debug logging: ON (level=debug)")
+	}
+}
+
+func cmdDump(c *cmdCtx) {
+	ts := time.Now().Format("20060102-150405")
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("gclaw-dump-%s.json", ts))
+
+	data := map[string]any{
+		"version":     Version,
+		"model":       c.cfg.Model.Default,
+		"fallback":    c.cfg.Model.Fallback,
+		"autonomy":    c.cfg.Agent.Autonomy,
+		"permission":  c.cfg.Permission.Mode,
+		"token_usage": c.ag.Usage(),
+		"context":     c.ctxMgr.UsageStats(),
+	}
+
+	// Write simple JSON
+	var buf strings.Builder
+	buf.WriteString("{\n")
+	for k, v := range data {
+		buf.WriteString(fmt.Sprintf("  %q: %q,\n", k, fmt.Sprintf("%v", v)))
+	}
+	buf.WriteString("}\n")
+
+	if err := os.WriteFile(path, []byte(buf.String()), 0644); err != nil {
+		fmt.Printf("Error writing dump: %v\n", err)
+		return
+	}
+	fmt.Printf("State dump saved to: %s\n", path)
+}
+
+func cmdBackup() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	gclawDir := filepath.Join(home, ".gclaw")
+	backupDir := filepath.Join(gclawDir, "backups")
+	os.MkdirAll(backupDir, 0755)
+
+	ts := time.Now().Format("20060102-150405")
+	archive := filepath.Join(backupDir, fmt.Sprintf("gclaw-%s.tar.gz", ts))
+
+	// Use tar command (available on Linux/macOS, Git Bash on Windows)
+	cmd := exec.Command("tar", "czf", archive,
+		"--exclude="+filepath.Join(gclawDir, "checkpoints"),
+		"--exclude="+backupDir,
+		"-C", home, ".gclaw")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("Backup failed: %v\n%s\n", err, string(output))
+		return
+	}
+	fmt.Printf("Backup saved to: %s\n", archive)
+}
+
+func boolStr(cond bool, trueVal, falseVal string) string {
+	if cond {
+		return trueVal
+	}
+	return falseVal
+}
+
+func countStr(count int, label string) string {
+	return fmt.Sprintf("%d %s", count, label)
+}
+
+func weixinStatusStr(ch *weixin.Channel) string {
+	if ch == nil {
+		return "disabled"
+	}
+	s := ch.Status()
+	if s.Connected {
+		return "connected"
+	}
+	return "not connected"
+}
+
+func getDiskUsage(path string) (string, error) {
+	if runtime.GOOS == "windows" {
+		return "N/A (windows)", nil
+	}
+	out, err := exec.Command("df", "-h", path).Output()
+	if err != nil {
+		return "N/A", nil
+	}
+		lines := strings.Split(string(out), "\n")
+	if len(lines) >= 2 {
+		fields := strings.Fields(lines[1])
+		if len(fields) >= 2 {
+			return fields[1], nil
+		}
+	}
+	return "N/A", nil
+}
+
 
 func handleWeixinCommand(cmd string, ch *weixin.Channel) {
 	args := strings.Fields(cmd)

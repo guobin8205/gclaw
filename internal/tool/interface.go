@@ -177,3 +177,12 @@ func (r *Registry) Names() []string {
 	}
 	return names
 }
+
+// AllTools returns all registered Tool instances.
+func (r *Registry) AllTools() []Tool {
+	tools := make([]Tool, 0, len(r.tools))
+	for _, t := range r.tools {
+		tools = append(tools, t)
+	}
+	return tools
+}

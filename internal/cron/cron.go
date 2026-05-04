@@ -115,6 +115,33 @@ func (s *Scheduler) RemoveJob(name string) {
 	s.mu.Unlock()
 }
 
+// PauseJob disables a job without removing it.
+func (s *Scheduler) PauseJob(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[name]
+	if !ok {
+		return fmt.Errorf("job %q not found", name)
+	}
+	job.Enabled = false
+	slog.Info("cron job paused", "name", name)
+	return nil
+}
+
+// ResumeJob re-enables a paused job.
+func (s *Scheduler) ResumeJob(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[name]
+	if !ok {
+		return fmt.Errorf("job %q not found", name)
+	}
+	job.Enabled = true
+	job.NextRun = nextRun(job.Schedule, time.Now(), s.location)
+	slog.Info("cron job resumed", "name", name)
+	return nil
+}
+
 // Jobs returns a list of all registered jobs.
 func (s *Scheduler) Jobs() []*Job {
 	s.mu.RLock()

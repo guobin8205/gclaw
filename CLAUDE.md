@@ -81,9 +81,11 @@ Model resolution order: configured `model.default` → `model.fallback[]` list �
 
 `Tool` interface: `Name()`, `Description()`, `InputSchema()`, `ConcurrencySafe()`, `RequiresApproval()`, `Execute()`.
 
-Built-in tools: `ReadFile`, `WriteFile`, `Bash`, `Glob`, `Grep`, `SleepTool` (registered only in semi/full autonomous mode).
+Built-in tools: `ReadFile`, `WriteFile`, `Patch`, `Bash`, `Glob`, `Grep`, `Todo`, `Memory`, `Clarify`, `WebSearch`, `WebExtract`, `SessionSearch`, `Vision`, `ImageGen`, `TTS`, `Video`, `CodeExecution`, `SleepTool`, plus browser tools (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_scroll`, `browser_press`, `browser_screenshot`), MCP tools (`mcp_list_servers`, `mcp_discover`, `mcp_call`), skill tools (`skill_create`, `skill_delete`, `skill_list`), and meta tools (`delegate_task`, `cron_list`, `cron_run`, `tasks_list`, `weixin_status`).
 
 **Bash tool shell resolution** (Windows-aware): tries `powershell` → `sh` → `bash` → `cmd`. Output is sanitized for UTF-16 LE/BE → UTF-8 conversion (WSL's `bash.exe` outputs UTF-16). The tool description dynamically reports the active shell to the model.
+
+**Tool Registry** (`internal/tool/interface.go`): `GlobalRegistry` holds all tools registered via `init()`. Key methods: `List()`, `AllTools()`, `Names()`, `Toolsets()`, `Get(name)`, `AvailableTools()`. Tools self-register via `init()` functions in each tool package.
 
 ### Permission System (`internal/perm/`)
 
@@ -98,6 +100,8 @@ The `Scheduler` runs an event loop consuming from `EventBus` (tick/file/webhook/
 ### Cron (`internal/cron/`)
 
 `Executor` interface (`Submit`/`IsBusy`/`Reset`) is implemented by `agent.Agent`. The scheduler checks every second, skips jobs when the executor is busy, and calls `Reset()` before each execution for a clean context. Each `Job` has an `OnResult` callback used for WeChat push.
+
+**No-Agent Script Mode**: Jobs with a `Script` field execute the script first. If the script output is empty or the last line contains `{"wakeAgent": false}`, the LLM agent is skipped (zero token cost). Otherwise, script output is injected into the agent prompt. `PauseJob(name)` and `ResumeJob(name)` allow runtime control.
 
 ### WeChat Channel (`internal/channel/weixin/`)
 
@@ -132,3 +136,54 @@ Skills are reusable procedural knowledge units stored as YAML frontmatter + Mark
 `Parse(dir)` reads `SKILL.md`, splits frontmatter via `---` delimiters, infers source from path (looks for `user`/`agent` segment). Skills are injected into system prompt via `ForSystemPrompt()` which formats all loaded skill bodies under `## Active Skills`.
 
 `DeleteSkill` only allows deleting `agent`-source skills. Tools: `skill_create`, `skill_delete`, `skill_list` (in `internal/tool/builtin/skill_tools/`).
+
+### Slash Commands
+
+The REPL supports slash commands via `handleCommand` in `cmd/gclaw/main.go`. Commands receive a `cmdCtx` struct with all runtime dependencies (config, agent, providers, memory, skills, sessions, MCP, gateway, cron, etc.).
+
+**Session**: `/clear`, `/compact`, `/interrupt <msg>`
+**Info**: `/help`, `/version`, `/status`, `/stats`, `/config`, `/model [name]`, `/fallback [models...]`, `/tools [all]`
+**Subsystems**: `/skills`, `/memory [list|clear]`, `/sessions`, `/mcp`, `/cron [run|pause|resume] <name>`, `/tasks`
+**Channels**: `/weixin login|logout|status`, `/gateway`
+**Diagnostics**: `/doctor`, `/debug`, `/dump`, `/backup`
+**Scheduling**: `/autonomy`
+**Exit**: `/exit`
+
+`/model <name>` calls `agent.SetModel(m)` to hot-swap the model at runtime. `/status` shows a comprehensive panel aggregating all subsystem states. `/doctor` checks config, model connectivity, and disk space.
+
+### Checkpoint Manager (`internal/checkpoint/`)
+
+Creates git shadow repos in `~/.gclaw/checkpoints/{dir_hash}/repo.git` using `GIT_DIR`/`GIT_WORK_TREE` isolation. Automatically snapshots before `WriteFile`, `Patch`, and destructive `Bash` commands. Per-turn dedup via `checkpointed` map cleared by `NewTurn()`.
+
+- `EnsureCheckpoint(dir, reason)` — auto-snapshot if directory not yet checkpointed this turn
+- `Restore(dir, hash)` — restore to a specific snapshot
+- `List(dir)` — list snapshots
+- `Diff(dir, hash)` — show diff between snapshot and current state
+
+### Delegate (`internal/delegate/`)
+
+`Dispatcher` supports single (`Delegate`) and batch (`BatchDelegate`) sub-agent execution. Batch mode uses `sync.WaitGroup` with semaphore-controlled concurrency. Results are returned as a JSON array indexed to input tasks. `AgentFactory` creates fresh agent instances; `MaxDepth` prevents recursive delegation.
+
+### Backend Abstraction Pattern
+
+Used for optional subsystems with multiple implementations:
+
+| Package | Interface | Backends |
+|---------|-----------|----------|
+| `internal/websearch/` | `Backend` | Tavily, Exa |
+| `internal/imagegen/` | `Backend` | FAL.ai, OpenAI DALL-E |
+| `internal/tts/` | `Backend` | OpenAI TTS |
+| `internal/browser/` | `Browser` | chromedp |
+| `internal/mcp/` | `Manager`/`Client` | stdio, HTTP (JSON-RPC 2.0) |
+
+Each has a `Factory` with `NewDefaultFactory(backend)` and `Available()` for auto-detection. Global references (e.g., `webtool.SearchFactory`, `visiontool.ModelRef`) are set in `main.go`.
+
+### Agent Runtime Methods
+
+- `SetModel(m)` — hot-swap the model at runtime (used by `/model` command)
+- `Reset()` — clears message history, drains interrupts, resets context
+- `Run(ctx, prompt)` / `RunStreaming(ctx, prompt, onText)` — execute agent loop
+- `Submit(ctx, message)` — concurrent-safe submission
+- `Interrupt(message)` / `InterruptAndStop(message, cancel)` — inject messages into running loop
+- `IsBusy()` — check if agent is currently executing
+- `Usage()` — returns `model.Usage` with input/output token counts

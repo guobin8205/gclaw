@@ -35,6 +35,10 @@ func (t *WriteFileTool) InputSchema() tool.Schema {
 	}
 }
 
+func init() {
+	tool.GlobalRegistry.Register(&WriteFileTool{})
+}
+
 func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
 	filePath, ok := params["file_path"].(string)
 	if !ok {
