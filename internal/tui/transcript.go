@@ -116,6 +116,18 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 		}
 		lines = append(lines, "")
 	case MsgAssistant:
+		// Thinking block (collapsed by default)
+		if msg.Thinking != "" {
+			if msg.ThinkingOpen {
+				thinkLines := strings.Split(msg.Thinking, "\n")
+				lines = append(lines, tr.styles.Muted.Render("▾ 💭 思考过程 · Ctrl+O 折叠"))
+				for _, tl := range thinkLines {
+					lines = append(lines, tr.styles.Muted.Render("  "+tl))
+				}
+			} else {
+				lines = append(lines, tr.styles.Muted.Render("▸ 💭 思考过程 · Ctrl+O 展开"))
+			}
+		}
 		mdLines := RenderMarkdown(msg.Content, tr.theme)
 		if len(mdLines) == 0 {
 			mdLines = []string{msg.Content}

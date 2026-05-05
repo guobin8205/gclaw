@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -43,6 +44,11 @@ type App struct {
 	compItems []CompletionItem
 	compIdx   int
 	compActive bool
+	// Queue
+	queue []string
+	// Attachment input mode
+	attaching    bool
+	attachInput  []rune
 }
 
 func (a *App) SetSend(send func(msg tea.Msg)) {
@@ -141,6 +147,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.transcript.UpdateLast(msgs[len(msgs)-1])
 			}
 		}
+		// Process queued slash commands
+		if len(a.queue) > 0 {
+			cmd := a.queue[0]
+			a.queue = a.queue[1:]
+			if a.deps.OnSlash != nil {
+				a.deps.OnSlash(cmd)
+			}
+		}
 		return a, nil
 
 	case EventMsg:
@@ -205,7 +219,11 @@ func (a *App) View() tea.View {
 		composerView = a.renderComposer()
 	}
 	compView := a.renderCompletions()
+	queueView := a.renderQueue()
 	parts := []string{transcriptView, divider, statusView}
+	if queueView != "" {
+		parts = append(parts, queueView)
+	}
 	if compView != "" {
 		parts = append(parts, compView)
 	}
@@ -215,6 +233,41 @@ func (a *App) View() tea.View {
 		parts = append(parts, hint)
 	}
 	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+func (a *App) handleAttachKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	code := msg.Code
+	switch code {
+	case tea.KeyEnter:
+		path := string(a.attachInput)
+		if path != "" {
+			isImg := strings.HasSuffix(strings.ToLower(path), ".png") ||
+				strings.HasSuffix(strings.ToLower(path), ".jpg") ||
+				strings.HasSuffix(strings.ToLower(path), ".jpeg") ||
+				strings.HasSuffix(strings.ToLower(path), ".gif") ||
+				strings.HasSuffix(strings.ToLower(path), ".webp")
+			a.composer.AddAttachment(path, isImg)
+		}
+		a.attaching = false
+		a.attachInput = nil
+		return a, nil
+	case tea.KeyEscape:
+		a.attaching = false
+		a.attachInput = nil
+		return a, nil
+	case tea.KeyBackspace:
+		if len(a.attachInput) > 0 {
+			a.attachInput = a.attachInput[:len(a.attachInput)-1]
+		} else {
+			a.attaching = false
+		}
+		return a, nil
+	default:
+		if msg.Text != "" {
+			a.attachInput = append(a.attachInput, []rune(msg.Text)...)
+		}
+		return a, nil
+	}
 }
 
 func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -261,9 +314,29 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// Attachment input mode
+	if a.attaching {
+		return a.handleAttachKey(msg)
+	}
+
+	// Ctrl+I: enter attachment mode
+	if code == 'i' && mod == tea.ModCtrl {
+		a.attaching = true
+		a.attachInput = nil
+		return a, nil
+	}
+
 	switch code {
 	case tea.KeyEnter:
 		if a.busy {
+			// Queue slash commands when busy
+			text := a.composer.Text()
+			if text != "" && strings.HasPrefix(text, "/") {
+				a.queue = append(a.queue, text)
+				a.composer.Clear()
+				a.compItems = nil
+				a.compActive = false
+			}
 			return a, nil
 		}
 		return a.submitInput()
@@ -398,6 +471,22 @@ func (a *App) renderCompletions() string {
 	return strings.Join(lines, "\n")
 }
 
+func (a *App) renderQueue() string {
+	if !a.busy || len(a.queue) == 0 {
+		return ""
+	}
+	summary := fmt.Sprintf("⏳ %d 条排队 ", len(a.queue))
+	items := a.queue
+	if len(items) > 3 {
+		items = items[:3]
+	}
+	summary += strings.Join(items, " · ")
+	if len(a.queue) > 3 {
+		summary += fmt.Sprintf(" · +%d", len(a.queue)-3)
+	}
+	return a.styles.Warning.Render(summary)
+}
+
 func (a *App) renderComposer() string {
 	var parts []string
 	if a.busy {
@@ -423,7 +512,12 @@ func (a *App) renderComposer() string {
 		}
 		parts = append(parts, a.styles.EventPrefix.Render(icon+" "+att.Path)+" "+a.styles.Error.Render("✕"))
 	}
-	parts = append(parts, a.styles.Muted.Render("Ctrl+Enter:换行 Enter:发送 Esc:取消"))
+	// Attachment input mode
+	if a.attaching {
+		parts = append(parts, a.styles.Accent.Render("📎 文件路径: ")+string(a.attachInput))
+	} else {
+		parts = append(parts, a.styles.Muted.Render("Ctrl+Enter:换行 Enter:发送 Ctrl+I:附加文件 Esc:取消"))
+	}
 	return strings.Join(parts, "\n")
 }
 
