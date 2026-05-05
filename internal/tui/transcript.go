@@ -8,14 +8,15 @@ import (
 )
 
 type Transcript struct {
-	msgs         []TranscriptMsg
-	styles       Styles
-	theme        Theme
-	height       int
-	width        int
-	yOffset      int
-	atBottom     bool
+	msgs          []TranscriptMsg
+	styles        Styles
+	theme         Theme
+	height        int
+	width         int
+	yOffset       int
+	atBottom      bool
 	cursorVisible bool
+	banner        string
 }
 
 func NewTranscript(styles Styles, theme Theme) *Transcript {
@@ -70,12 +71,17 @@ func (tr *Transcript) ToggleCursor() {
 }
 
 func (tr *Transcript) Messages() []TranscriptMsg { return tr.msgs }
+func (tr *Transcript) SetBanner(banner string)    { tr.banner = banner }
 
 func (tr *Transcript) Render() string {
 	if tr.height <= 0 || tr.width <= 0 {
 		return ""
 	}
 	var allLines []string
+	if tr.banner != "" {
+		allLines = append(allLines, tr.styles.Accent.Render(tr.banner))
+		allLines = append(allLines, "")
+	}
 	for _, msg := range tr.msgs {
 		allLines = append(allLines, tr.renderMessage(msg)...)
 	}

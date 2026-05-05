@@ -114,6 +114,17 @@ func (a *App) AppendWelcome(content string) {
 	})
 }
 
+func (a *App) SetBanner(version, model, mode string) {
+	parts := []string{"gclaw " + version}
+	if model != "" {
+		parts = append(parts, model)
+	}
+	if mode != "" {
+		parts = append(parts, mode)
+	}
+	a.transcript.SetBanner(strings.Join(parts, " │ "))
+}
+
 func (a *App) Init() tea.Cmd {
 	return tickCmd()
 }

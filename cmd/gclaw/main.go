@@ -619,6 +619,7 @@ func runREPL() {
 		},
 	})
 		app.AppendWelcome("type /help for commands")
+	app.SetBanner(Version, cfg.Model.Default, cfg.Agent.Autonomy)
 		
 
 	p := tea.NewProgram(app)
