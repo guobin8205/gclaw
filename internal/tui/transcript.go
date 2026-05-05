@@ -76,11 +76,11 @@ func (tr *Transcript) Render() string {
 	total := len(allLines)
 	vis := tr.height
 	var start int
-	if tr.atBottom || total <= vis {
+	if total <= vis {
+		// Content fits — show from top, no scrolling needed
+		start = 0
+	} else if tr.atBottom {
 		start = total - vis
-		if start < 0 {
-			start = 0
-		}
 	} else {
 		start = tr.yOffset
 	}
@@ -92,8 +92,9 @@ func (tr *Transcript) Render() string {
 	if start < end {
 		visible = allLines[start:end]
 	}
+	// Pad at bottom (not top) so content starts from the top
 	for len(visible) < vis {
-		visible = append([]string{""}, visible...)
+		visible = append(visible, "")
 	}
 	content := lipgloss.NewStyle().Width(tr.width - 2).Render(
 		strings.Join(visible, "\n"),
