@@ -22,6 +22,7 @@ import (
 	"github.com/openclaw/gclaw/internal/context"
 	"github.com/openclaw/gclaw/internal/cron"
 	"github.com/openclaw/gclaw/internal/delegate"
+	curatorpkg "github.com/openclaw/gclaw/internal/curator"
 	"github.com/openclaw/gclaw/internal/gateway"
 	gw_adapter "github.com/openclaw/gclaw/internal/gateway/adapter"
 	"github.com/openclaw/gclaw/internal/memory"
@@ -199,6 +200,13 @@ func runREPL() {
 			if err := skillMgr.LoadProject(projectSkillsDir); err != nil {
 				slog.Warn("skill: failed to load project skills", "dir", projectSkillsDir, "error", err)
 			}
+		}
+
+		// Install builtin skills on first run
+		if n, err := skill.InstallBuiltin(skillDir); err != nil {
+			slog.Warn("skill: failed to install builtin", "error", err)
+		} else if n > 0 {
+			slog.Info("skill: installed builtin", "count", n)
 		}
 
 		if err := skillMgr.LoadAll(skillDir); err != nil {
@@ -401,8 +409,9 @@ func runREPL() {
 
 	// Setup delegate dispatcher and meta tool references
 	var mcpMgr *mcp.Manager
+	var factory delegate.AgentFactory
 	if cfg.Delegate.Enabled {
-		factory := func() delegate.AgentRunner {
+		factory = func() delegate.AgentRunner {
 			return agent.New(agent.Config{
 				Model:        modelProvider,
 				Tools:        toolRegistry,
@@ -531,6 +540,28 @@ func runREPL() {
 		defer scheduler.Stop()
 	}
 
+	// Initialize curator (auto skill maintenance)
+	var curatorInst *curatorpkg.Curator
+	if cfg.Curator.Enabled && skillMgr != nil {
+		curatorCfg := curatorpkg.Config{
+			Enabled:      true,
+			Interval:     time.Duration(cfg.Curator.IntervalH) * time.Hour,
+			MinIdle:      time.Duration(cfg.Curator.MinIdleH) * time.Hour,
+			StaleAfter:   time.Duration(cfg.Curator.StaleAfterD) * 24 * time.Hour,
+			ArchiveAfter: time.Duration(cfg.Curator.ArchiveAfterD) * 24 * time.Hour,
+		}
+		if curatorCfg.Interval <= 0 {
+			curatorCfg.Interval = 7 * 24 * time.Hour
+		}
+		curatorInst = curatorpkg.New(curatorCfg, skillMgr, factory)
+		if scheduler != nil {
+			scheduler.SetOnIdleHook(func(idle time.Duration) {
+				curatorInst.MaybeRun(stdctx.Background(), idle)
+			})
+		}
+		slog.Info("curator enabled", "interval", curatorCfg.Interval)
+	}
+
 	// Wire TUI
 	theme := tui.LoadTheme(cfg.TUI.Theme)
 	logBuf := earlyLogBuf
@@ -553,6 +584,7 @@ func runREPL() {
 		memoryMgr:       memoryMgr,
 		sessionStore:    sessionStore,
 		skillMgr:        skillMgr,
+		curatorInst:     curatorInst,
 		mcpMgr:          mcpMgr,
 		gw:              gw,
 		logBuf:          logBuf,
@@ -632,6 +664,16 @@ func runREPL() {
 
 	p := tea.NewProgram(app)
 	app.SetSend(p.Send)
+	if ag != nil {
+		ag.OnToolStart = func(name, detail string) {
+			slog.Info("TUI tool start", "name", name, "detail", detail)
+			p.Send(tui.ToolStartEvent{Name: name, Detail: detail})
+		}
+		ag.OnToolEnd = func(name string, output string, err error, duration time.Duration) {
+			slog.Info("TUI tool end", "name", name, "err", err, "duration", duration)
+			p.Send(tui.ToolEndEvent{Name: name, Output: output, Err: err, Duration: duration})
+		}
+	}
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 	}
@@ -652,6 +694,7 @@ type cmdCtx struct {
 	memoryMgr       *memory.Manager
 	sessionStore    session.Store
 	skillMgr        *skill.Manager
+	curatorInst     *curatorpkg.Curator
 	mcpMgr          *mcp.Manager
 	gw              *gateway.Gateway
 	logBuf          *tui.LogBuffer
@@ -814,11 +857,48 @@ Exit:
 			fmt.Fprintln(w, "Skills system is not enabled (set skills.enabled: true)")
 			break
 		}
-		skills := c.skillMgr.List()
-		fmt.Fprintf(w, "\n--- Skills (%d) ---\n", len(skills))
-		for _, s := range skills {
-			fmt.Fprintf(w, "  %-20s [%s]\n", s.Name, s.Source)
+		fmt.Fprint(w, c.skillMgr.ForSystemIndex())
+	
+	case strings.HasPrefix(cmd, "/curator"):
+		if c.curatorInst == nil {
+			fmt.Fprintln(w, "Curator is not enabled (set curator.enabled: true)")
+			break
 		}
+		sub := strings.TrimPrefix(cmd, "/curator")
+		sub = strings.TrimSpace(sub)
+		switch {
+		case sub == "" || sub == "status":
+			st := c.curatorInst.Status()
+			fmt.Fprintln(w, "Curator status:")
+			fmt.Fprintln(w, "  Paused:", st.Paused)
+			fmt.Fprintln(w, "  Runs:", st.RunCount)
+			if !st.LastRunAt.IsZero() {
+				fmt.Fprintln(w, "  Last run:", st.LastRunAt.Format("2006-01-02 15:04:05"))
+			}
+			if st.LastSummary != "" {
+				fmt.Fprintln(w, "  Summary:", st.LastSummary)
+			}
+		case sub == "run":
+			fmt.Fprintln(w, "Running curator...")
+			c.curatorInst.RunNow(stdctx.Background())
+			fmt.Fprintln(w, "Curator pass complete.")
+		case sub == "pause":
+			c.curatorInst.Pause()
+			fmt.Fprintln(w, "Curator paused.")
+		case sub == "resume":
+			c.curatorInst.Resume()
+			fmt.Fprintln(w, "Curator resumed.")
+		case strings.HasPrefix(sub, "restore "):
+			name := strings.TrimPrefix(sub, "restore ")
+			if err := c.skillMgr.UnarchiveSkill(name); err != nil {
+				fmt.Fprintln(w, "Failed to restore:", err)
+			} else {
+				fmt.Fprintln(w, "Skill", name, "restored from archive.")
+			}
+		default:
+			fmt.Fprintln(w, "Usage: /curator [status|run|pause|resume|restore <name>]")
+		}
+
 	case cmd == "/memory":
 		if c.memoryMgr == nil {
 			fmt.Fprintln(w, "Memory system is not enabled (set memory.enabled: true)")
@@ -1416,10 +1496,23 @@ func parseAutonomy(s string) agent.AutonomyLevel {
 func defaultSystemPrompt() string {
 	return `You are gclaw, a helpful and versatile autonomous assistant.
 
-Core rules:
-- Answer directly from your knowledge when possible. Do NOT call tools for simple factual questions, general knowledge, summaries, translations, or explanations.
-- Only use tools (Bash, ReadFile, WriteFile, Glob, Grep) when the task genuinely requires file access, code execution, or current data from the internet.
-- If a tool fails twice in a row, STOP and tell the user what went wrong. Never retry the same approach more than twice.
+# Tool-use rules
+
+NEVER answer these from memory — ALWAYS use a tool:
+- Current facts: weather, news, stock prices, exchange rates, latest versions → web_search or web_extract
+- Arithmetic, math, calculations → Bash
+- Current time, date → Bash (date)
+- File contents, sizes, line counts → ReadFile, Glob, Grep
+- System state: OS, CPU, memory, disk, processes → Bash
+- Git history, branches, diffs → Bash (git)
+
+When you say you will perform an action (e.g. "let me check", "I will search"), you MUST immediately make the corresponding tool call in the same response. Never end your turn with a promise of future action — execute it now.
+
+If a tool returns empty or partial results, retry with a different query before giving up. Keep working until the task is complete.
+
+# General rules
+- For pure general knowledge, summaries, translations, or explanations where no tools are needed, answer directly.
+- If a tool fails twice in a row, STOP and tell the user what went wrong.
 - Be concise and direct. Respond in the user's language.
 - Do not list your capabilities unless asked.`
 }

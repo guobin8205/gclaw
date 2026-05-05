@@ -169,7 +169,7 @@ func (ch *Channel) pollLoop() {
 			if ch.ctx.Err() != nil {
 				return
 			}
-			slog.Error("weixin: getUpdates failed", "error", err)
+			slog.Debug("weixin: getUpdates failed", "error", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}

@@ -57,6 +57,45 @@ func init() {
 	tool.GlobalRegistry.Register(&skillListTool{})
 }
 
+// ---- Skill View ----
+
+type skillViewTool struct{}
+
+func (t *skillViewTool) Name() string    { return "skill_view" }
+func (t *skillViewTool) Toolset() string { return "skill" }
+func (t *skillViewTool) Description() string {
+	return "Load and return the full content of a skill by name. Use this before following a skill's instructions."
+}
+func (t *skillViewTool) Check() bool           { return ManagerRef != nil }
+func (t *skillViewTool) ConcurrencySafe() bool { return true }
+func (t *skillViewTool) RequiresApproval(map[string]any) bool { return false }
+
+func (t *skillViewTool) InputSchema() tool.Schema {
+	return tool.Schema{
+		Type: "object",
+		Properties: map[string]tool.Property{
+			"name": {Type: "string", Description: "Name of the skill to load"},
+		},
+		Required: []string{"name"},
+	}
+}
+
+func (t *skillViewTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
+	name, _ := params["name"].(string)
+	if name == "" {
+		return tool.ToolResult{Content: "Skill name is required.", IsError: true}, nil
+	}
+	body := ManagerRef.GetBody(name)
+	if body == "" {
+		return tool.ToolResult{Content: fmt.Sprintf("Skill %q not found.", name), IsError: true}, nil
+	}
+	return tool.ToolResult{Content: body}, nil
+}
+
+func init() {
+	tool.GlobalRegistry.Register(&skillViewTool{})
+}
+
 // ---- Skill Create ----
 
 type skillCreateTool struct{}

@@ -27,9 +27,16 @@ type Scheduler struct {
 	totalTicks         int64
 	mu                 sync.Mutex
 
+	onIdle func(idleDuration time.Duration)
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+}
+
+// SetOnIdleHook sets a callback triggered on tick events when idle.
+func (s *Scheduler) SetOnIdleHook(fn func(time.Duration)) {
+	s.onIdle = fn
 }
 
 // NewScheduler creates an autonomous scheduler.
@@ -103,6 +110,14 @@ func (s *Scheduler) handleEvent(event Event) {
 	s.mu.Lock()
 	s.totalTicks++
 	s.mu.Unlock()
+
+	// Fire idle hook for curator and similar background tasks
+	if event.Type == EventTick && s.onIdle != nil {
+		s.mu.Lock()
+		idleDuration := time.Duration(s.ticksSinceLastWork) * s.cfg.TickInterval
+		s.mu.Unlock()
+		go s.onIdle(idleDuration)
+	}
 
 	slog.Debug("handling event",
 		"type", event.Type,

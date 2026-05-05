@@ -169,6 +169,33 @@ Skills are reusable procedural knowledge units stored as YAML frontmatter + Mark
 
 `DeleteSkill` only allows deleting `agent`-source skills. Tools: `skill_create`, `skill_delete`, `skill_list` (in `internal/tool/builtin/skill_tools/`).
 
+**Builtin Skills** (`internal/skill/builtin.go`): 5 embedded skills shipped via `go:embed` from `internal/skill/builtin/`. `InstallBuiltin(destDir)` copies them to `<destDir>/user/` on first run (won't overwrite existing). Categories: `software-development/plan`, `software-development/systematic-debugging`, `software-development/test-driven-development`, `creative/architecture-diagram`, `devops/kanban-orchestrator`.
+
+**Skill Metadata**: `Pinned` field (YAML tag `pinned: true`) protects skills from curator actions. `Source` field tracks origin (`user`/`agent`/`project`).
+
+**Archive**: `ArchiveSkill(name)` moves `<agentDir>/<name>/` to `<skillDir>/.archive/<name>/` (non-destructive). `UnarchiveSkill(name)` restores. `scanDir` skips `.archive` directories.
+
+### Curator (`internal/curator/`)
+
+Automatic maintenance of agent-created skills. Two-phase operation:
+
+1. **Auto-transitions** (pure time-based, no LLM): skills inactive > `stale_after_days` get `[stale]` prefix on description; skills inactive > `archive_after_days` are moved to `.archive/`; stale skills that become active again are reactivated (prefix removed). Pinned skills are never touched.
+2. **LLM review** (via `delegate.AgentFactory`): spawns a sub-agent to scan agent skills, merge narrow skills into umbrella skills, and archive the absorbed ones. Agent uses `skill_list`, `skill_view`, `skill_create`, `skill_delete` tools.
+
+`MaybeRun(ctx, idleDuration)` gates: paused check → interval check → min-idle check → execute. State persisted to `<skillDir>/.curator_state` (JSON: `last_run_at`, `run_count`, `paused`, `last_summary`).
+
+Config (`internal/config/config.go` — `CuratorConfig`):
+```yaml
+curator:
+  enabled: true
+  interval_hours: 168      # 7 days
+  min_idle_hours: 2
+  stale_after_days: 30
+  archive_after_days: 90
+```
+
+Wired via `scheduler.SetOnIdleHook(fn)` — curator's `MaybeRun` is called on each `EventTick` when idle. Only operates on `source=agent` skills; never touches user/project/builtin skills.
+
 ### Slash Commands
 
 The REPL supports slash commands via `handleCommand` in `cmd/gclaw/main.go`. Commands receive a `cmdCtx` struct with all runtime dependencies (config, agent, providers, memory, skills, sessions, MCP, gateway, cron, etc.).
@@ -179,6 +206,7 @@ The REPL supports slash commands via `handleCommand` in `cmd/gclaw/main.go`. Com
 **Channels**: `/weixin login|logout|status`, `/gateway`
 **Diagnostics**: `/doctor`, `/debug`, `/dump`, `/backup`
 **Scheduling**: `/autonomy`
+**Curator**: `/curator status|run|pause|resume|restore <name>`
 **Exit**: `/exit`
 
 `/model <name>` calls `agent.SetModel(m)` to hot-swap the model at runtime. `/status` shows a comprehensive panel aggregating all subsystem states. `/doctor` checks config, model connectivity, and disk space.

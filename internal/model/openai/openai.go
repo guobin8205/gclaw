@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -338,6 +339,23 @@ func (oa *OpenAI) toResponse(or *oaiResponse) *model.Response {
 	return resp
 }
 
+// finalizeToolCalls parses accumulated raw JSON arguments in tool calls.
+func finalizeToolCalls(toolCalls map[int]*model.ToolUse) {
+	for _, tu := range toolCalls {
+		if tu.Input == nil {
+			tu.Input = make(map[string]any)
+			continue
+		}
+		if raw, ok := tu.Input["_args"]; ok {
+			delete(tu.Input, "_args")
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(raw.(string)), &parsed); err == nil {
+				tu.Input = parsed
+			}
+		}
+	}
+}
+
 func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamEvent) {
 	defer close(events)
 	defer resp.Body.Close()
@@ -358,6 +376,7 @@ func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamE
 
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			slog.Debug("openai stream done", "reasoning_len", fullReasoning.Len(), "text_len", fullText.Len())
 			events <- model.StreamEvent{
 				Type:             model.StreamEventComplete,
 			ReasoningContent: fullReasoning.String(),
@@ -372,6 +391,7 @@ func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamE
 		}
 
 		if chunk.Usage != nil {
+			slog.Debug("openai stream usage", "reasoning_len", fullReasoning.Len(), "text_len", fullText.Len())
 			for _, tu := range toolCalls {
 				events <- model.StreamEvent{
 					Type:    model.StreamEventToolUse,
@@ -379,7 +399,8 @@ func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamE
 				}
 			}
 			events <- model.StreamEvent{
-				Type: model.StreamEventComplete,
+				Type:             model.StreamEventComplete,
+				ReasoningContent: fullReasoning.String(),
 				Usage: &model.Usage{
 					InputTokens:  chunk.Usage.PromptTokens,
 					OutputTokens: chunk.Usage.CompletionTokens,
@@ -390,6 +411,7 @@ func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamE
 
 		for _, choice := range chunk.Choices {
 			if choice.Delta.ReasoningContent != "" {
+				slog.Debug("openai reasoning chunk", "len", len(choice.Delta.ReasoningContent))
 				fullReasoning.WriteString(choice.Delta.ReasoningContent)
 			}
 			if choice.Delta.Content != "" {

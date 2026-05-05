@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 	"log/slog"
 	"strings"
 	"sync"
@@ -43,6 +45,10 @@ type Agent struct {
 	// Concurrency control for autonomous mode
 	busy bool
 	mu   sync.Mutex
+
+	// Tool event callbacks (set by caller for TUI integration)
+	OnToolStart func(name, detail string)
+	OnToolEnd   func(name string, output string, err error, duration time.Duration)
 
 	// Interrupt system: allows injecting messages into a running agent loop
 	interruptCh chan string
@@ -241,6 +247,7 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 				}
 			case model.StreamEventComplete:
 				fullReasoning = event.ReasoningContent
+				slog.Debug("agent captured reasoning", "len", len(fullReasoning))
 				if event.Usage != nil {
 					a.totalUsage.InputTokens += event.Usage.InputTokens
 					a.totalUsage.OutputTokens += event.Usage.OutputTokens
@@ -257,6 +264,7 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 			ToolCalls:        toolUses,
 			ReasoningContent: fullReasoning,
 		})
+		slog.Debug("assistant msg appended", "reasoning_len", len(fullReasoning), "tools", len(toolUses))
 
 		if len(toolUses) == 0 {
 			return fullText, nil
@@ -301,7 +309,19 @@ func (a *Agent) executeTool(ctx context.Context, tu model.ToolUse) error {
 	// Normalize array params: wrap bare scalars in single-element lists
 	tool.NormalizeParams(t.InputSchema(), tu.Input)
 
+	detail := toolDetail(tu.Name, tu.Input)
+	if a.OnToolStart != nil {
+		a.OnToolStart(tu.Name, detail)
+	}
+	start := time.Now()
+
 	result, err := t.Execute(ctx, tu.Input)
+	duration := time.Since(start)
+
+	if a.OnToolEnd != nil {
+		a.OnToolEnd(tu.Name, result.Content, err, duration)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -401,4 +421,42 @@ func (a *Agent) syncToManager() {
 	for _, msg := range a.messages {
 		a.ctxMgr.AddMessage(msg)
 	}
+}
+
+
+// toolDetail returns a short description of a tool call for display.
+func toolDetail(name string, input map[string]any) string {
+	if input == nil {
+		return ""
+	}
+	// Strip unparsed _args if present
+	if raw, ok := input["_args"].(string); ok {
+		delete(input, "_args")
+		var parsed map[string]any
+		if json.Unmarshal([]byte(raw), &parsed) == nil {
+			for k, v := range parsed {
+				input[k] = v
+			}
+		}
+	}
+	// Try common keys based on tool type
+	keyOrder := []string{"command", "query", "pattern", "path", "url", "question", "input", "text"}
+	for _, key := range keyOrder {
+		if v, ok := input[key].(string); ok && v != "" {
+			if len(v) > 80 {
+				return v[:80] + "..."
+			}
+			return v
+		}
+	}
+	// Fallback: first string value
+	for _, v := range input {
+		if s, ok := v.(string); ok && s != "" {
+			if len(s) > 80 {
+				return s[:80] + "..."
+			}
+			return s
+		}
+	}
+	return ""
 }

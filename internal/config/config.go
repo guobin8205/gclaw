@@ -33,6 +33,7 @@ type Config struct {
 	MCP        MCPConfig        `yaml:"mcp"`
 	Checkpoint CheckpointConfig `yaml:"checkpoint"`
 	TUI        TUIConfig        `yaml:"tui"`
+	Curator    CuratorConfig    `yaml:"curator"`
 }
 
 // CronConfig holds scheduled job configuration.
@@ -217,6 +218,15 @@ type TUIConfig struct {
 	History    TUIHistoryConfig   `yaml:"history"`
 	Log        TUILogConfig       `yaml:"log"`
 	Completion TUICompletionConfig `yaml:"completion"`
+}
+
+// CuratorConfig holds curator (auto skill maintenance) configuration.
+type CuratorConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	IntervalH     int  `yaml:"interval_hours"`
+	MinIdleH      int  `yaml:"min_idle_hours"`
+	StaleAfterD   int  `yaml:"stale_after_days"`
+	ArchiveAfterD int  `yaml:"archive_after_days"`
 }
 
 type TUIHistoryConfig struct {
@@ -452,6 +462,22 @@ func merge(dst *Config, src Config) {
 	}
 	if src.Skills.ProjectDir != "" {
 		dst.Skills.ProjectDir = src.Skills.ProjectDir
+	}
+	// Curator merge
+	if src.Curator.Enabled {
+		dst.Curator.Enabled = true
+	}
+	if src.Curator.IntervalH > 0 {
+		dst.Curator.IntervalH = src.Curator.IntervalH
+	}
+	if src.Curator.MinIdleH > 0 {
+		dst.Curator.MinIdleH = src.Curator.MinIdleH
+	}
+	if src.Curator.StaleAfterD > 0 {
+		dst.Curator.StaleAfterD = src.Curator.StaleAfterD
+	}
+	if src.Curator.ArchiveAfterD > 0 {
+		dst.Curator.ArchiveAfterD = src.Curator.ArchiveAfterD
 	}
 	// Memory merge
 	if src.Memory.Enabled {

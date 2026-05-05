@@ -194,6 +194,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case ToolStartEvent:
+		a.transcript.Append(TranscriptMsg{
+			Kind: MsgToolCall,
+			Tool: &ToolCall{
+				Name:   m.Name,
+				Detail: m.Detail,
+				Status: ToolStatusRunning,
+			},
+		})
+		return a, nil
+
+	case ToolEndEvent:
+		tmsgs := a.transcript.Messages()
+		for i := len(tmsgs) - 1; i >= 0; i-- {
+			if tmsgs[i].Kind == MsgToolCall && tmsgs[i].Tool != nil {
+				tc := tmsgs[i].Tool
+				if tc.Name == m.Name && tc.Status == ToolStatusRunning {
+					if m.Err != nil {
+						tc.Status = ToolStatusError
+						tc.Output = m.Err.Error()
+					} else {
+						tc.Status = ToolStatusDone
+						tc.Output = m.Output
+					}
+					tc.Duration = m.Duration.Truncate(time.Millisecond).String()
+					tc.Collapsed = true
+					break
+				}
+			}
+		}
+		return a, nil
+
 	case tickMsg:
 		a.statusbar.SetElapsed(time.Since(a.startTime).Truncate(time.Second).String())
 		if a.quitConfirm {
@@ -554,6 +586,18 @@ type EventMsg struct {
 
 type streamChunkMsg struct {
 	text string
+}
+
+type ToolStartEvent struct {
+	Name   string
+	Detail string
+}
+
+type ToolEndEvent struct {
+	Name     string
+	Output   string
+	Err      error
+	Duration time.Duration
 }
 
 type tickMsg time.Time
