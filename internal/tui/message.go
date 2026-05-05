@@ -38,6 +38,7 @@ type TranscriptMsg struct {
 	Thinking     string
 	ThinkingOpen bool
 	Images       []string
+	Streaming    bool // true when assistant message is receiving stream chunks
 }
 
 func ToolCallIcon(name string) string {
@@ -73,6 +74,19 @@ func toolCallShortName(name string) string {
 	}
 }
 
+func (tc ToolCall) statusIcon() string {
+	switch tc.Status {
+	case ToolStatusRunning:
+		return "⠋"
+	case ToolStatusError:
+		return "✕"
+	case ToolStatusDone:
+		return "✓"
+	default:
+		return ""
+	}
+}
+
 func (tc ToolCall) Format() string {
 	icon := ToolCallIcon(tc.Name)
 	short := toolCallShortName(tc.Name)
@@ -83,8 +97,8 @@ func (tc ToolCall) Format() string {
 	if tc.Duration != "" {
 		parts = append(parts, tc.Duration)
 	}
-	if tc.Status == ToolStatusRunning {
-		parts = append(parts, "...")
+	if si := tc.statusIcon(); si != "" {
+		parts = append(parts, si)
 	}
 	return strings.Join(parts, " ")
 }

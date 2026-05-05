@@ -12,15 +12,18 @@ import (
 )
 
 type Deps struct {
-	Config   *config.Config
-	Agent    *agent.Agent
-	Theme    Theme
-	LogBuf   *LogBuffer
-	History  *History
-	CompEng  *CompletionEngine
-	OnSubmit func(ctx context.Context, input string, images []string) (string, error)
-	OnSlash  func(cmd string)
-	Send     func(msg tea.Msg) // tea.Program.Send wrapper
+	Config       *config.Config
+	Agent        *agent.Agent
+	Theme        Theme
+	LogBuf       *LogBuffer
+	History      *History
+	CompEng      *CompletionEngine
+	OnSubmit     func(ctx context.Context, input string, images []string) (string, error)
+	OnSlash      func(cmd string)
+	Send         func(msg tea.Msg) // tea.Program.Send wrapper
+	GetAgentCount func() int
+	GetBgTasks   func() int
+	IsCronActive func() bool
 }
 
 type App struct {
@@ -97,6 +100,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msgs := a.transcript.Messages()
 			if len(msgs) == 0 || msgs[len(msgs)-1].Kind != MsgAssistant {
 				a.transcript.Append(TranscriptMsg{Kind: MsgAssistant, Content: m.text})
+			} else {
+				msgs[len(msgs)-1].Streaming = false
+				a.transcript.UpdateLast(msgs[len(msgs)-1])
 			}
 		}
 		return a, nil
@@ -111,9 +117,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		msgs := a.transcript.Messages()
 		if len(msgs) > 0 && msgs[len(msgs)-1].Kind == MsgAssistant {
 			msgs[len(msgs)-1].Content += m.text
+			msgs[len(msgs)-1].Streaming = true
 			a.transcript.UpdateLast(msgs[len(msgs)-1])
 		} else {
-			a.transcript.Append(TranscriptMsg{Kind: MsgAssistant, Content: m.text})
+			a.transcript.Append(TranscriptMsg{Kind: MsgAssistant, Content: m.text, Streaming: true})
 		}
 		return a, nil
 
@@ -121,6 +128,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusbar.SetElapsed(time.Since(a.startTime).Truncate(time.Second).String())
 		if a.quitConfirm {
 			a.quitConfirm = false
+		}
+		a.transcript.ToggleCursor()
+		// Update status bar with live data from agent
+		if a.deps.Agent != nil {
+			usage := a.deps.Agent.Usage()
+			a.statusbar.SetContextUsage(usage.InputTokens+usage.OutputTokens, a.deps.Agent.MaxTokens())
+		}
+		if a.deps.GetAgentCount != nil {
+			a.statusbar.SetAgentCount(a.deps.GetAgentCount())
+		}
+		if a.deps.GetBgTasks != nil {
+			a.statusbar.SetBackgroundTasks(a.deps.GetBgTasks())
+		}
+		if a.deps.IsCronActive != nil {
+			a.statusbar.SetCronActive(a.deps.IsCronActive())
 		}
 		return a, tickCmd()
 

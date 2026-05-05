@@ -1,19 +1,21 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 )
 
 type Transcript struct {
-	msgs     []TranscriptMsg
-	styles   Styles
-	theme    Theme
-	height   int
-	width    int
-	yOffset  int
-	atBottom bool
+	msgs         []TranscriptMsg
+	styles       Styles
+	theme        Theme
+	height       int
+	width        int
+	yOffset      int
+	atBottom     bool
+	cursorVisible bool
 }
 
 func NewTranscript(styles Styles, theme Theme) *Transcript {
@@ -61,6 +63,10 @@ func (tr *Transcript) ScrollDown(n int) {
 func (tr *Transcript) ScrollToBottom() {
 	tr.atBottom = true
 	tr.scrollToBottom()
+}
+
+func (tr *Transcript) ToggleCursor() {
+	tr.cursorVisible = !tr.cursorVisible
 }
 
 func (tr *Transcript) Messages() []TranscriptMsg { return tr.msgs }
@@ -114,15 +120,17 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 		if len(mdLines) == 0 {
 			mdLines = []string{msg.Content}
 		}
-		for _, l := range mdLines {
-			lines = append(lines, tr.styles.Assistant.Render(l))
+		for i, l := range mdLines {
+			if msg.Streaming && tr.cursorVisible && i == len(mdLines)-1 {
+				lines = append(lines, tr.styles.Assistant.Render(l)+"▌")
+			} else {
+				lines = append(lines, tr.styles.Assistant.Render(l))
+			}
 		}
 		lines = append(lines, "")
 	case MsgToolCall:
 		if msg.Tool != nil {
-			for _, tl := range msg.Tool.FormatTree(0) {
-				lines = append(lines, "  "+tl)
-			}
+			lines = append(lines, tr.renderToolCall(msg.Tool, 0)...)
 		}
 		lines = append(lines, "")
 	case MsgEvent:
@@ -132,6 +140,33 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 				tr.styles.Muted.Render("  "+msg.Content+" ---"),
 		)
 		lines = append(lines, "")
+	}
+	return lines
+}
+
+func (tr *Transcript) renderToolCall(tc *ToolCall, depth int) []string {
+	var lines []string
+	indent := strings.Repeat("┊ ", depth)
+	if depth == 0 {
+		lines = append(lines, "  "+tc.Format())
+	} else {
+		lines = append(lines, "  "+indent+tc.Format())
+	}
+	// Output folding
+	if tc.Output != "" {
+		outLines := strings.Split(tc.Output, "\n")
+		if tc.Collapsed {
+			lines = append(lines, "  "+indent+"  "+tr.styles.Muted.Render(fmt.Sprintf("▸ 输出 (%d行) · Ctrl+O 展开", len(outLines))))
+		} else {
+			for _, ol := range outLines {
+				if ol != "" {
+					lines = append(lines, "  "+indent+"  "+tr.styles.Muted.Render(ol))
+				}
+			}
+		}
+	}
+	for _, child := range tc.Children {
+		lines = append(lines, tr.renderToolCall(&child, depth+1)...)
 	}
 	return lines
 }

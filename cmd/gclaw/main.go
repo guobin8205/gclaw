@@ -596,6 +596,25 @@ func runREPL() {
 		OnSlash: func(cmd string) {
 			handleCommand(cmd, cmdContext)
 		},
+		GetAgentCount: func() int {
+			if scheduler == nil {
+				return 0
+			}
+			stats := scheduler.Stats()
+			if busy, ok := stats["agent_busy"].(bool); ok && busy {
+				return 1
+			}
+			return 0
+		},
+		GetBgTasks: func() int {
+			if taskMgr == nil {
+				return 0
+			}
+			return len(taskMgr.ListByStatus(task.StatusRunning)) + len(taskMgr.ListByStatus(task.StatusPending))
+		},
+		IsCronActive: func() bool {
+			return cronSched != nil
+		},
 	})
 		app.AppendWelcome("type /help for commands")
 		

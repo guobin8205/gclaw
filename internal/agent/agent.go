@@ -68,6 +68,16 @@ func (a *Agent) SetModel(m model.Model) {
 	a.cfg.Model = m
 }
 
+// MaxTokens returns the model's maximum token context.
+func (a *Agent) MaxTokens() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfg.Model == nil {
+		return 0
+	}
+	return a.cfg.Model.MaxTokens()
+}
+
 // Reset clears the conversation history for a fresh start.
 func (a *Agent) Reset() {
 	a.messages = nil

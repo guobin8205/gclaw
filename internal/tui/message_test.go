@@ -18,7 +18,7 @@ func TestToolCallIcon(t *testing.T) {
 func TestToolCallFormat(t *testing.T) {
 	tc := ToolCall{Name: "ReadFile", Detail: "config.go", Duration: "0.4s", Status: ToolStatusDone}
 	got := tc.Format()
-	if got != "⚙ read config.go 0.4s" {
+	if got != "⚙ read config.go 0.4s ✓" {
 		t.Errorf("unexpected: %q", got)
 	}
 }
@@ -35,7 +35,7 @@ func TestToolCallFormatTree(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d", len(lines))
 	}
-	if lines[0] != "⚡ delegate_task configure weixin" {
+	if lines[0] != "⚡ delegate_task configure weixin ✓" {
 		t.Errorf("unexpected: %q", lines[0])
 	}
 }
