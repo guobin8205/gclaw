@@ -44,24 +44,30 @@ Each runs independently — WeChat and cron never block the REPL, and vice versa
 
 ### TUI (`internal/tui/`)
 
-Full Bubble Tea v2 TUI replacing the original `bufio.Scanner` REPL. Layout: transcript (virtual scroll + scrollbar) → divider → status bar → composer.
+Full Bubble Tea v2 TUI replacing the original `bufio.Scanner` REPL. Layout: banner → transcript (virtual scroll + scrollbar) → divider → status bar → queue preview → completions → composer.
 
 **Components:**
-- `App` — root `tea.Model`, dispatches key events, manages busy/idle state
-- `Transcript` — virtual scrolling with right-side scrollbar, renders 4 message kinds (User, Assistant, ToolCall, Event)
+- `App` — root `tea.Model`, dispatches key events, manages busy/idle state, completion state, attachment mode, queue
+- `Transcript` — virtual scrolling with right-side scrollbar, renders 4 message kinds (User, Assistant, ToolCall, Event), banner, thinking fold
 - `Composer` — multi-line input with `[]rune` storage (correct multi-byte/Chinese support), attachments, cursor movement
-- `StatusBar` — left-aligned `● model │ ctx │ agents │ bg │ cron │ time`
+- `StatusBar` — left-aligned `● model │ ctx │ agents │ bg │ cron │ time` with live token/cron/agent data
 - `ApprovalRequest` — tool approval popup (Y/N/A/Esc)
-- `CompletionEngine` — slash command matching with `/` prefix
-- `History` — persistent command history (`~/.gclaw/history`), search, dedup
-- `LogBuffer` — ring buffer with `slog.Handler` integration
-- `RenderMarkdown` — code blocks, bold, italic, inline code
+- `CompletionEngine` — slash command matching with `/` prefix, dropdown UI with Tab/↑↓/Esc
+- `History` — persistent command history (`~/.gclaw/history`), search, dedup, saved on exit
+- `LogBuffer` — ring buffer with `slog.Handler` integration, `/logs [N]` command
+- `RenderMarkdown` — code blocks with border + syntax highlighting, tables, headings, bold, italic, inline code, links
 
-**Streaming:** `runAgentCmd` uses `Agent.RunStreaming` with `tea.Program.Send` callback to push `streamChunkMsg` for real-time text display. `SetSend()` is called after `tea.NewProgram` creation to wire the callback.
+**Streaming:** `runAgentCmd` uses `Agent.RunStreaming` with `tea.Program.Send` callback to push `streamChunkMsg` for real-time text display with blinking cursor `▌`. `SetSend()` is called after `tea.NewProgram` creation to wire the callback.
 
 **Themes:** `tokyo-night` (default), `catppuccin-mocha`, `light`, `terminal`. Configurable via `tui.theme` in config.yaml.
 
-**Key bindings:** Enter=send, Ctrl+Enter=newline, Esc=clear, Ctrl+C=quit/clear, Ctrl+L=clear transcript, ↑↓=history, PgUp/PgDn=scroll, Tab=completion (planned).
+**Key bindings:** Enter=send, Ctrl+Enter=newline, Esc=clear/close completions, Ctrl+C=interrupt/quit, Ctrl+L=clear transcript, ↑↓=history/completions, PgUp/PgDn=scroll, Tab=apply completion, Ctrl+I=attach file.
+
+**Queue:** Slash commands typed while agent is busy are queued and auto-executed when agent finishes. Queue preview shows above composer.
+
+**Thinking fold:** DeepSeek ReasoningContent renders as `▸ 💭 思考过程 · Ctrl+O 展开`, collapsed by default.
+
+**Tool Call Tree:** Nested `┊` indentation with status icons (✓/✕/⠋), output folding with line count.
 
 ### Agent Loop (`internal/agent/agent.go`)
 
