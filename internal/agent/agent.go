@@ -224,6 +224,7 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 		}
 
 		var fullText string
+		var fullReasoning string
 		var toolUses []model.ToolUse
 
 	streamLoop:
@@ -239,6 +240,7 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 					toolUses = append(toolUses, *event.ToolUse)
 				}
 			case model.StreamEventComplete:
+				fullReasoning = event.ReasoningContent
 				if event.Usage != nil {
 					a.totalUsage.InputTokens += event.Usage.InputTokens
 					a.totalUsage.OutputTokens += event.Usage.OutputTokens
@@ -250,9 +252,10 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 		}
 
 		a.messages = append(a.messages, model.Message{
-			Role:      "assistant",
-			Content:   fullText,
-			ToolCalls: toolUses,
+			Role:             "assistant",
+			Content:          fullText,
+			ToolCalls:        toolUses,
+			ReasoningContent: fullReasoning,
 		})
 
 		if len(toolUses) == 0 {

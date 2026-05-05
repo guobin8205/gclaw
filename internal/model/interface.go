@@ -4,11 +4,12 @@ import "context"
 
 // StreamEvent represents a single streaming chunk from an LLM.
 type StreamEvent struct {
-	Type       StreamEventType
-	Text       string
-	ToolUse    *ToolUse
-	Usage      *Usage
-	StopReason string
+	Type             StreamEventType
+	Text             string
+	ToolUse          *ToolUse
+	Usage            *Usage
+	StopReason       string
+	ReasoningContent string
 }
 
 type StreamEventType int

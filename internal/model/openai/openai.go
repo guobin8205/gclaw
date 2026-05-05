@@ -146,9 +146,10 @@ type oaiStreamChoice struct {
 }
 
 type oaiDelta struct {
-	Role      string        `json:"role,omitempty"`
-	Content   string        `json:"content,omitempty"`
-	ToolCalls []oaiToolCall `json:"tool_calls,omitempty"`
+	Role             string        `json:"role,omitempty"`
+	Content          string        `json:"content,omitempty"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	ToolCalls        []oaiToolCall `json:"tool_calls,omitempty"`
 }
 
 // Call makes a non-streaming API call.
@@ -345,6 +346,7 @@ func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamE
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var fullText strings.Builder
+	var fullReasoning strings.Builder
 	// Accumulate tool calls across chunks (OpenAI sends them incrementally)
 	toolCalls := make(map[int]*model.ToolUse)
 
@@ -357,8 +359,9 @@ func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamE
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
 			events <- model.StreamEvent{
-				Type:  model.StreamEventComplete,
-				Usage: &model.Usage{OutputTokens: len(fullText.String()) / 4},
+				Type:             model.StreamEventComplete,
+			ReasoningContent: fullReasoning.String(),
+				Usage:            &model.Usage{OutputTokens: len(fullText.String()) / 4},
 			}
 			return
 		}
@@ -386,6 +389,9 @@ func (oa *OpenAI) processStream(resp *http.Response, events chan<- model.StreamE
 		}
 
 		for _, choice := range chunk.Choices {
+			if choice.Delta.ReasoningContent != "" {
+				fullReasoning.WriteString(choice.Delta.ReasoningContent)
+			}
 			if choice.Delta.Content != "" {
 				fullText.WriteString(choice.Delta.Content)
 				events <- model.StreamEvent{

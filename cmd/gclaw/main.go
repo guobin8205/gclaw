@@ -1,8 +1,10 @@
 ﻿package main
 
 import (
+	"bytes"
 	stdctx "context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -556,7 +558,8 @@ func runREPL() {
 		logBuf:          logBuf,
 	}
 
-	app := tui.NewApp(tui.Deps{
+	var app *tui.App
+	app = tui.NewApp(tui.Deps{
 		Config:  cfg,
 		Agent:   ag,
 		Theme:   theme,
@@ -596,7 +599,12 @@ func runREPL() {
 			return response, nil
 		},
 		OnSlash: func(cmd string) {
-			handleCommand(cmd, cmdContext)
+			var buf bytes.Buffer
+			handleCommand(cmd, cmdContext, &buf)
+			output := strings.TrimRight(buf.String(), "\n")
+			if output != "" {
+				app.AppendEvent("cmd", strings.Fields(cmd)[0], output)
+			}
 		},
 		GetAgentCount: func() int {
 			if scheduler == nil {
@@ -649,12 +657,12 @@ type cmdCtx struct {
 	logBuf          *tui.LogBuffer
 }
 
-func handleCommand(cmd string, c *cmdCtx) {
+func handleCommand(cmd string, c *cmdCtx, w io.Writer) {
 	args := strings.Fields(cmd)
 	switch {
 	// ---- Help ----
 	case cmd == "/help":
-		fmt.Println(`
+		fmt.Fprintln(w, `
 Session:
   /clear             Clear conversation and reset
   /compact           Force context compaction
@@ -698,122 +706,122 @@ Exit:
 	case cmd == "/clear":
 		c.ctxMgr.Reset()
 		c.ag.Reset()
-		fmt.Println("Conversation cleared.")
+		fmt.Fprintln(w, "Conversation cleared.")
 	case cmd == "/compact":
 		c.ctxMgr.Compact(10)
-		fmt.Println("Context compacted.")
+		fmt.Fprintln(w, "Context compacted.")
 	case strings.HasPrefix(cmd, "/interrupt"):
 		if !c.ag.IsBusy() {
-			fmt.Println("Agent is not currently running.")
+			fmt.Fprintln(w, "Agent is not currently running.")
 			break
 		}
 		msg := strings.TrimSpace(strings.TrimPrefix(cmd, "/interrupt"))
 		if msg == "" {
-			fmt.Println("Usage: /interrupt <message>")
+			fmt.Fprintln(w, "Usage: /interrupt <message>")
 			break
 		}
 		c.ag.Interrupt(msg)
-		fmt.Printf("Interrupt sent: %q\n", msg)
+		fmt.Fprintf(w, "Interrupt sent: %q\n", msg)
 
 	// ---- Info ----
 	case cmd == "/version":
-		fmt.Printf("gclaw version %s\n", Version)
+		fmt.Fprintf(w, "gclaw version %s\n", Version)
 	case cmd == "/status":
-		fmt.Println("\n--- gclaw Status ---")
-		fmt.Printf("Version:    %s\n", Version)
-		fmt.Printf("Model:      %s\n", c.cfg.Model.Default)
-		fmt.Printf("Autonomy:   %s\n", c.cfg.Agent.Autonomy)
-		fmt.Printf("Permission: %s\n", c.cfg.Permission.Mode)
-		fmt.Println()
-		fmt.Println("--- Tokens ---")
+		fmt.Fprintln(w, "\n--- gclaw Status ---")
+		fmt.Fprintf(w, "Version:    %s\n", Version)
+		fmt.Fprintf(w, "Model:      %s\n", c.cfg.Model.Default)
+		fmt.Fprintf(w, "Autonomy:   %s\n", c.cfg.Agent.Autonomy)
+		fmt.Fprintf(w, "Permission: %s\n", c.cfg.Permission.Mode)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "--- Tokens ---")
 		u := c.ag.Usage()
-		fmt.Printf("Input:  %d\n", u.InputTokens)
-		fmt.Printf("Output: %d\n", u.OutputTokens)
-		fmt.Println()
-		fmt.Println(c.ctxMgr.UsageStats())
-			fmt.Println("--- Subsystems ---")
-			fmt.Printf("Memory:     %s\n", boolStr(c.memoryMgr != nil, "enabled", "disabled"))
+		fmt.Fprintf(w, "Input:  %d\n", u.InputTokens)
+		fmt.Fprintf(w, "Output: %d\n", u.OutputTokens)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, c.ctxMgr.UsageStats())
+			fmt.Fprintln(w, "--- Subsystems ---")
+			fmt.Fprintf(w, "Memory:     %s\n", boolStr(c.memoryMgr != nil, "enabled", "disabled"))
 			skillCount := 0
 			if c.skillMgr != nil { skillCount = len(c.skillMgr.List()) }
-			fmt.Printf("Skills:     %s\n", boolStr(c.skillMgr != nil, countStr(skillCount, "loaded"), "disabled"))
-			fmt.Printf("Checkpoint: %s\n", boolStr(c.cfg.Checkpoint.Enabled, "enabled", "disabled"))
+			fmt.Fprintf(w, "Skills:     %s\n", boolStr(c.skillMgr != nil, countStr(skillCount, "loaded"), "disabled"))
+			fmt.Fprintf(w, "Checkpoint: %s\n", boolStr(c.cfg.Checkpoint.Enabled, "enabled", "disabled"))
 			cronJobs := 0
 			if c.cronSched != nil { cronJobs = len(c.cronSched.Jobs()) }
-			fmt.Printf("Cron:       %s\n", boolStr(c.cronSched != nil, countStr(cronJobs, "jobs"), "disabled"))
-			fmt.Printf("Gateway:    %s\n", boolStr(c.gw != nil, "enabled", "disabled"))
-			fmt.Printf("WeChat:     %s\n", weixinStatusStr(c.weixinCh))
+			fmt.Fprintf(w, "Cron:       %s\n", boolStr(c.cronSched != nil, countStr(cronJobs, "jobs"), "disabled"))
+			fmt.Fprintf(w, "Gateway:    %s\n", boolStr(c.gw != nil, "enabled", "disabled"))
+			fmt.Fprintf(w, "WeChat:     %s\n", weixinStatusStr(c.weixinCh))
 			mcpServers := 0
 			if c.mcpMgr != nil { mcpServers = len(c.mcpMgr.ListServers()) }
-			fmt.Printf("MCP:        %s\n", boolStr(c.mcpMgr != nil, countStr(mcpServers, "servers"), "disabled"))
-			fmt.Printf("Session:    %s\n", boolStr(c.sessionStore != nil, "enabled", "disabled"))
+			fmt.Fprintf(w, "MCP:        %s\n", boolStr(c.mcpMgr != nil, countStr(mcpServers, "servers"), "disabled"))
+			fmt.Fprintf(w, "Session:    %s\n", boolStr(c.sessionStore != nil, "enabled", "disabled"))
 	case cmd == "/stats":
-		fmt.Println("\n--- Context Stats ---")
-		fmt.Println(c.ctxMgr.UsageStats())
-		fmt.Println("--- Model Stats ---")
-		fmt.Printf("Input tokens: %d\n", c.ag.Usage().InputTokens)
-		fmt.Printf("Output tokens: %d\n", c.ag.Usage().OutputTokens)
+		fmt.Fprintln(w, "\n--- Context Stats ---")
+		fmt.Fprintln(w, c.ctxMgr.UsageStats())
+		fmt.Fprintln(w, "--- Model Stats ---")
+		fmt.Fprintf(w, "Input tokens: %d\n", c.ag.Usage().InputTokens)
+		fmt.Fprintf(w, "Output tokens: %d\n", c.ag.Usage().OutputTokens)
 	case cmd == "/config":
-		fmt.Println("\n--- Config ---")
-		fmt.Printf("Model: %s\n", c.cfg.Model.Default)
-		fmt.Printf("Fallback: %v\n", c.cfg.Model.Fallback)
-		fmt.Printf("Autonomy: %s\n", c.cfg.Agent.Autonomy)
-		fmt.Printf("Max turns: %d\n", c.cfg.Agent.MaxTurns)
-		fmt.Printf("Permission: %s\n", c.cfg.Permission.Mode)
-		fmt.Printf("Context max_tokens: %d\n", c.cfg.Context.MaxTokens)
-		fmt.Printf("Checkpoint: %v\n", c.cfg.Checkpoint.Enabled)
-		fmt.Printf("Delegate: %v\n", c.cfg.Delegate.Enabled)
+		fmt.Fprintln(w, "\n--- Config ---")
+		fmt.Fprintf(w, "Model: %s\n", c.cfg.Model.Default)
+		fmt.Fprintf(w, "Fallback: %v\n", c.cfg.Model.Fallback)
+		fmt.Fprintf(w, "Autonomy: %s\n", c.cfg.Agent.Autonomy)
+		fmt.Fprintf(w, "Max turns: %d\n", c.cfg.Agent.MaxTurns)
+		fmt.Fprintf(w, "Permission: %s\n", c.cfg.Permission.Mode)
+		fmt.Fprintf(w, "Context max_tokens: %d\n", c.cfg.Context.MaxTokens)
+		fmt.Fprintf(w, "Checkpoint: %v\n", c.cfg.Checkpoint.Enabled)
+		fmt.Fprintf(w, "Delegate: %v\n", c.cfg.Delegate.Enabled)
 	case cmd == "/model":
-		fmt.Printf("\nCurrent model: %s\n", c.cfg.Model.Default)
-		fmt.Println("\nAvailable models:")
+		fmt.Fprintf(w, "\nCurrent model: %s\n", c.cfg.Model.Default)
+		fmt.Fprintln(w, "\nAvailable models:")
 		for _, name := range c.providerFactory.Names() {
 			marker := ""
 			if name == c.cfg.Model.Default {
 				marker = " (active)"
 			}
-			fmt.Printf("  %s%s\n", name, marker)
+			fmt.Fprintf(w, "  %s%s\n", name, marker)
 		}
 	case strings.HasPrefix(cmd, "/model "):
 		name := strings.TrimSpace(strings.TrimPrefix(cmd, "/model "))
 		m, err := c.providerFactory.Build(name)
 		if err != nil {
-			fmt.Printf("Error: model %q not available: %v\n", name, err)
+			fmt.Fprintf(w, "Error: model %q not available: %v\n", name, err)
 			break
 		}
 		c.ag.SetModel(m)
 		c.cfg.Model.Default = name
-		fmt.Printf("Switched to model: %s\n", name)
+		fmt.Fprintf(w, "Switched to model: %s\n", name)
 	case cmd == "/fallback":
-		fmt.Println("\n--- Fallback Chain ---")
+		fmt.Fprintln(w, "\n--- Fallback Chain ---")
 		if len(c.cfg.Model.Fallback) == 0 {
-			fmt.Println("  (none configured)")
+			fmt.Fprintln(w, "  (none configured)")
 		}
 		for i, name := range c.cfg.Model.Fallback {
-			fmt.Printf("  %d. %s\n", i+1, name)
+			fmt.Fprintf(w, "  %d. %s\n", i+1, name)
 		}
 	case strings.HasPrefix(cmd, "/fallback "):
 		models := strings.Fields(strings.TrimPrefix(cmd, "/fallback "))
 		c.cfg.Model.Fallback = models
-		fmt.Printf("Fallback chain updated: %v\n", models)
+		fmt.Fprintf(w, "Fallback chain updated: %v\n", models)
 
 	case cmd == "/tools":
-		listTools(c, false)
+		listTools(c, false, w)
 	case cmd == "/tools all":
-		listTools(c, true)
+		listTools(c, true, w)
 
 	// ---- Subsystems ----
 	case cmd == "/skills":
 		if c.skillMgr == nil {
-			fmt.Println("Skills system is not enabled (set skills.enabled: true)")
+			fmt.Fprintln(w, "Skills system is not enabled (set skills.enabled: true)")
 			break
 		}
 		skills := c.skillMgr.List()
-		fmt.Printf("\n--- Skills (%d) ---\n", len(skills))
+		fmt.Fprintf(w, "\n--- Skills (%d) ---\n", len(skills))
 		for _, s := range skills {
-			fmt.Printf("  %-20s [%s]\n", s.Name, s.Source)
+			fmt.Fprintf(w, "  %-20s [%s]\n", s.Name, s.Source)
 		}
 	case cmd == "/memory":
 		if c.memoryMgr == nil {
-			fmt.Println("Memory system is not enabled (set memory.enabled: true)")
+			fmt.Fprintln(w, "Memory system is not enabled (set memory.enabled: true)")
 			break
 		}
 		memDir := c.cfg.Memory.Dir
@@ -821,12 +829,12 @@ Exit:
 			memDir = config.ExpandPath("~/.gclaw/memory")
 		}
 		files, _ := os.ReadDir(memDir)
-		fmt.Printf("\n--- Memory ---\n")
-		fmt.Printf("Directory: %s\n", memDir)
-		fmt.Printf("Entries: %d\n", len(files))
+		fmt.Fprintf(w, "\n--- Memory ---\n")
+		fmt.Fprintf(w, "Directory: %s\n", memDir)
+		fmt.Fprintf(w, "Entries: %d\n", len(files))
 	case cmd == "/memory list":
 		if c.memoryMgr == nil {
-			fmt.Println("Memory system is not enabled")
+			fmt.Fprintln(w, "Memory system is not enabled")
 			break
 		}
 		memDir := c.cfg.Memory.Dir
@@ -834,13 +842,13 @@ Exit:
 			memDir = config.ExpandPath("~/.gclaw/memory")
 		}
 		entries, _ := os.ReadDir(memDir)
-		fmt.Printf("\n--- Memory Entries (%d) ---\n", len(entries))
+		fmt.Fprintf(w, "\n--- Memory Entries (%d) ---\n", len(entries))
 		for _, e := range entries {
-			fmt.Printf("  %s\n", e.Name())
+			fmt.Fprintf(w, "  %s\n", e.Name())
 		}
 	case cmd == "/memory clear":
 		if c.memoryMgr == nil {
-			fmt.Println("Memory system is not enabled")
+			fmt.Fprintln(w, "Memory system is not enabled")
 			break
 		}
 		memDir := c.cfg.Memory.Dir
@@ -851,66 +859,66 @@ Exit:
 		for _, e := range entries {
 			os.Remove(filepath.Join(memDir, e.Name()))
 		}
-		fmt.Printf("Cleared %d memory entries.\n", len(entries))
+		fmt.Fprintf(w, "Cleared %d memory entries.\n", len(entries))
 	case cmd == "/sessions":
 		if c.sessionStore == nil {
-			fmt.Println("Session store is not enabled (set session.enabled: true)")
+			fmt.Fprintln(w, "Session store is not enabled (set session.enabled: true)")
 			break
 		}
 		sessions, err := c.sessionStore.ListSessions()
 		if err != nil {
-			fmt.Printf("Error listing sessions: %v\n", err)
+			fmt.Fprintf(w, "Error listing sessions: %v\n", err)
 			break
 		}
-		fmt.Printf("\n--- Sessions (%d) ---\n", len(sessions))
+		fmt.Fprintf(w, "\n--- Sessions (%d) ---\n", len(sessions))
 		for _, s := range sessions {
-			fmt.Printf("  %s  agent=%s  msgs=%d  tokens=%d  %s\n",
+			fmt.Fprintf(w, "  %s  agent=%s  msgs=%d  tokens=%d  %s\n",
 				s.ID[:8], s.AgentType, s.MsgCount, s.TokenEst,
 				s.StartTime.Format("01-02 15:04"))
 		}
 	case cmd == "/mcp":
 		if c.mcpMgr == nil {
-			fmt.Println("MCP is not configured (add mcp.servers in config)")
+			fmt.Fprintln(w, "MCP is not configured (add mcp.servers in config)")
 			break
 		}
 		servers := c.mcpMgr.ListServers()
 		statuses := c.mcpMgr.ServerStatus()
-		fmt.Printf("\n--- MCP Servers (%d) ---\n", len(servers))
+		fmt.Fprintf(w, "\n--- MCP Servers (%d) ---\n", len(servers))
 		for _, name := range servers {
 			connected := statuses[name]
-			fmt.Printf("  %-20s %s\n", name, boolStr(connected, "connected", "disconnected"))
+			fmt.Fprintf(w, "  %-20s %s\n", name, boolStr(connected, "connected", "disconnected"))
 		}
 
 	// ---- Cron (extended) ----
 	case cmd == "/cron":
-		cmdCronList(c)
+		cmdCronList(c, w)
 	case len(args) >= 3 && args[0] == "/cron":
-		cmdCronSubcommand(c, args[1], args[2:])
+		cmdCronSubcommand(c, args[1], args[2:], w)
 
 	// ---- Tasks ----
 	case cmd == "/tasks":
 		tasks := c.taskMgr.List()
-		fmt.Printf("\n%d tasks:\n", len(tasks))
+		fmt.Fprintf(w, "\n%d tasks:\n", len(tasks))
 		for _, t := range tasks {
-			fmt.Printf("  [%s] %s %s\n", t.Status, t.Type, t.Description)
+			fmt.Fprintf(w, "  [%s] %s %s\n", t.Status, t.Type, t.Description)
 		}
 
 	// ---- Channels ----
 	case strings.HasPrefix(cmd, "/weixin"):
 		if c.weixinCh == nil {
-			fmt.Println("微信通道未启用 (设置 channels.weixin.enabled: true)")
+			fmt.Fprintln(w, "微信通道未启用 (设置 channels.weixin.enabled: true)")
 		} else {
-			handleWeixinCommand(cmd, c.weixinCh)
+			handleWeixinCommand(cmd, c.weixinCh, w)
 		}
 	case cmd == "/gateway":
 		if c.gw == nil {
-			fmt.Println("Gateway is not enabled (set gateway.enabled: true)")
+			fmt.Fprintln(w, "Gateway is not enabled (set gateway.enabled: true)")
 			break
 		}
 		statuses := c.gw.Statuses()
-		fmt.Println("\n--- Gateway Platforms ---")
+		fmt.Fprintln(w, "\n--- Gateway Platforms ---")
 		for name, st := range statuses {
-			fmt.Printf("  %-10s connected=%v\n", name, st.Connected)
+			fmt.Fprintf(w, "  %-10s connected=%v\n", name, st.Connected)
 		}
 
 	case cmd == "/logs" || strings.HasPrefix(cmd, "/logs "):
@@ -918,7 +926,7 @@ Exit:
 		n := 20
 		if len(args) > 1 {
 			if args[1] == "-f" {
-				fmt.Println("Follow mode not yet supported in TUI. Use /logs [N] instead.")
+				fmt.Fprintln(w, "Follow mode not yet supported in TUI. Use /logs [N] instead.")
 				break
 			}
 			if v, err := strconv.Atoi(args[1]); err == nil && v > 0 {
@@ -926,35 +934,35 @@ Exit:
 			}
 		}
 		if c.logBuf == nil {
-			fmt.Println("Log buffer not available.")
+			fmt.Fprintln(w, "Log buffer not available.")
 			break
 		}
 		lines := c.logBuf.Last(n)
-		fmt.Printf("\n--- Recent %d logs ---\n", len(lines))
+		fmt.Fprintf(w, "\n--- Recent %d logs ---\n", len(lines))
 		for _, line := range lines {
-			fmt.Printf("[%s] %s\n", line.Level, line.Content)
+			fmt.Fprintf(w, "[%s] %s\n", line.Level, line.Content)
 		}
 
 	// ---- Diagnostics ----
 	case cmd == "/doctor":
-		cmdDoctor(c)
+		cmdDoctor(c, w)
 	case cmd == "/debug":
-		cmdDebug()
+		cmdDebug(w)
 	case cmd == "/dump":
-		cmdDump(c)
+		cmdDump(c, w)
 	case cmd == "/backup":
-		cmdBackup()
+		cmdBackup(w)
 
 	// ---- Scheduling ----
 	case cmd == "/autonomy":
 		if c.scheduler != nil {
 			stats := c.scheduler.Stats()
-			fmt.Println("\n--- Autonomous Scheduler ---")
+			fmt.Fprintln(w, "\n--- Autonomous Scheduler ---")
 			for k, v := range stats {
-				fmt.Printf("%s: %v\n", k, v)
+				fmt.Fprintf(w, "%s: %v\n", k, v)
 			}
 		} else {
-			fmt.Println("Autonomous mode is not active (set agent.autonomy: semi or full in config)")
+			fmt.Fprintln(w, "Autonomous mode is not active (set agent.autonomy: semi or full in config)")
 		}
 
 	// ---- Exit ----
@@ -968,60 +976,60 @@ Exit:
 		os.Exit(0)
 
 	default:
-		fmt.Printf("Unknown command: %s (type /help)\n", cmd)
+		fmt.Fprintf(w, "Unknown command: %s (type /help)\n", cmd)
 	}
 }
 
-func listTools(c *cmdCtx, verbose bool) {
+func listTools(c *cmdCtx, verbose bool, w io.Writer) {
 	tools := tool.GlobalRegistry.AllTools()
 	toolsets := tool.GlobalRegistry.Toolsets()
-	fmt.Printf("\n--- Tools (%d, %d toolsets) ---\n", len(tools), len(toolsets))
+	fmt.Fprintf(w, "\n--- Tools (%d, %d toolsets) ---\n", len(tools), len(toolsets))
 
 	if verbose {
 		for _, t := range tools {
-			fmt.Printf("  %-18s [%s] %s\n", t.Name(), t.Toolset(), t.Description())
+			fmt.Fprintf(w, "  %-18s [%s] %s\n", t.Name(), t.Toolset(), t.Description())
 		}
 	} else {
 		prev := ""
 		for _, t := range tools {
 			if t.Toolset() != prev {
-				fmt.Printf("\n  [%s]\n", t.Toolset())
+				fmt.Fprintf(w, "\n  [%s]\n", t.Toolset())
 				prev = t.Toolset()
 			}
-			fmt.Printf("    %s\n", t.Name())
+			fmt.Fprintf(w, "    %s\n", t.Name())
 		}
 	}
 }
 
-func cmdCronList(c *cmdCtx) {
+func cmdCronList(c *cmdCtx, w io.Writer) {
 	if c.cronSched == nil {
-		fmt.Println("Cron scheduler is not active (add cron.jobs in config)")
+		fmt.Fprintln(w, "Cron scheduler is not active (add cron.jobs in config)")
 		return
 	}
 	jobs := c.cronSched.Jobs()
-	fmt.Printf("\n--- Cron Jobs (%d) ---\n", len(jobs))
+	fmt.Fprintf(w, "\n--- Cron Jobs (%d) ---\n", len(jobs))
 	for _, j := range jobs {
 		status := "enabled"
 		if !j.Enabled {
 			status = "paused"
 		}
-		fmt.Printf("  %s [%s]\n", j.Name, status)
-		fmt.Printf("    schedule: %s\n", j.Schedule)
-		fmt.Printf("    next_run: %s\n", j.NextRun.Format("15:04:05"))
-		fmt.Printf("    run_count: %d\n", j.RunCount)
+		fmt.Fprintf(w, "  %s [%s]\n", j.Name, status)
+		fmt.Fprintf(w, "    schedule: %s\n", j.Schedule)
+		fmt.Fprintf(w, "    next_run: %s\n", j.NextRun.Format("15:04:05"))
+		fmt.Fprintf(w, "    run_count: %d\n", j.RunCount)
 		if j.Script != "" {
-			fmt.Printf("    script: %s\n", j.Script)
+			fmt.Fprintf(w, "    script: %s\n", j.Script)
 		}
 	}
 }
 
-func cmdCronSubcommand(c *cmdCtx, sub string, nameArgs []string) {
+func cmdCronSubcommand(c *cmdCtx, sub string, nameArgs []string, w io.Writer) {
 	if c.cronSched == nil {
-		fmt.Println("Cron scheduler is not active")
+		fmt.Fprintln(w, "Cron scheduler is not active")
 		return
 	}
 	if len(nameArgs) == 0 {
-		fmt.Printf("Usage: /cron %s <name>\n", sub)
+		fmt.Fprintf(w, "Usage: /cron %s <name>\n", sub)
 		return
 	}
 	name := nameArgs[0]
@@ -1029,84 +1037,84 @@ func cmdCronSubcommand(c *cmdCtx, sub string, nameArgs []string) {
 	case "run":
 		result, err := c.cronSched.RunNow(stdctx.Background(), name)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Fprintf(w, "Error: %v\n", err)
 			break
 		}
-		fmt.Printf("Job %q executed:\n%s\n", name, result)
+		fmt.Fprintf(w, "Job %q executed:\n%s\n", name, result)
 	case "pause":
 		if err := c.cronSched.PauseJob(name); err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Fprintf(w, "Error: %v\n", err)
 		} else {
-			fmt.Printf("Job %q paused.\n", name)
+			fmt.Fprintf(w, "Job %q paused.\n", name)
 		}
 	case "resume":
 		if err := c.cronSched.ResumeJob(name); err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Fprintf(w, "Error: %v\n", err)
 		} else {
-			fmt.Printf("Job %q resumed.\n", name)
+			fmt.Fprintf(w, "Job %q resumed.\n", name)
 		}
 	default:
-		fmt.Printf("Unknown cron subcommand: %s (run|pause|resume)\n", sub)
+		fmt.Fprintf(w, "Unknown cron subcommand: %s (run|pause|resume)\n", sub)
 	}
 }
 
-func cmdDoctor(c *cmdCtx) {
-	fmt.Println("\n--- gclaw Doctor ---")
+func cmdDoctor(c *cmdCtx, w io.Writer) {
+	fmt.Fprintln(w, "\n--- gclaw Doctor ---")
 	ok := true
 
 	// Check config
 	userPath, _ := config.UserConfigPath()
 	if _, err := os.Stat(userPath); err == nil {
-		fmt.Printf("  Config file:       OK (%s)\n", userPath)
+		fmt.Fprintf(w, "  Config file:       OK (%s)\n", userPath)
 	} else {
-		fmt.Println("  Config file:       MISSING (using defaults)")
+		fmt.Fprintln(w, "  Config file:       MISSING (using defaults)")
 	}
 
 	// Check model connectivity
 	models := c.providerFactory.Names()
-	fmt.Printf("  Registered models: %d (%v)\n", len(models), models)
+	fmt.Fprintf(w, "  Registered models: %d (%v)\n", len(models), models)
 	if m, err := c.providerFactory.Build(c.cfg.Model.Default); err != nil {
-		fmt.Printf("  Default model:     FAIL (%v)\n", err)
+		fmt.Fprintf(w, "  Default model:     FAIL (%v)\n", err)
 		ok = false
 	} else {
-		fmt.Printf("  Default model:     OK (%s, max_tokens=%d)\n", m.ID(), m.MaxTokens())
+		fmt.Fprintf(w, "  Default model:     OK (%s, max_tokens=%d)\n", m.ID(), m.MaxTokens())
 	}
 
 	// Check memory dir
 	memDir := config.ExpandPath("~/.gclaw")
 	if fi, err := os.Stat(memDir); err == nil && fi.IsDir() {
-		fmt.Printf("  Data directory:    OK (%s)\n", memDir)
+		fmt.Fprintf(w, "  Data directory:    OK (%s)\n", memDir)
 	} else {
-		fmt.Println("  Data directory:    MISSING")
+		fmt.Fprintln(w, "  Data directory:    MISSING")
 		ok = false
 	}
 
 	// Check disk space
 	if home, err := os.UserHomeDir(); err == nil {
 		if usage, err := getDiskUsage(home); err == nil {
-			fmt.Printf("  Disk usage:        %s\n", usage)
+			fmt.Fprintf(w, "  Disk usage:        %s\n", usage)
 		}
 	}
 
 	if ok {
-		fmt.Println("\n  All checks passed.")
+		fmt.Fprintln(w, "\n  All checks passed.")
 	} else {
-		fmt.Println("\n  Some checks failed.")
+		fmt.Fprintln(w, "\n  Some checks failed.")
 	}
 }
 
-func cmdDebug() {
+func cmdDebug(w io.Writer) {
 	current := slog.Default().Enabled(stdctx.Background(), slog.LevelDebug)
 	if current {
 		slog.SetLogLoggerLevel(slog.LevelInfo)
-		fmt.Println("Debug logging: OFF (level=info)")
+		fmt.Fprintln(w, "Debug logging: OFF (level=info)")
 	} else {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
-		fmt.Println("Debug logging: ON (level=debug)")
+		fmt.Fprintln(w, "Debug logging: ON (level=debug)")
 	}
 }
 
-func cmdDump(c *cmdCtx) {
+func cmdDump(c *cmdCtx, w io.Writer) {
 	ts := time.Now().Format("20060102-150405")
 	path := filepath.Join(os.TempDir(), fmt.Sprintf("gclaw-dump-%s.json", ts))
 
@@ -1129,16 +1137,16 @@ func cmdDump(c *cmdCtx) {
 	buf.WriteString("}\n")
 
 	if err := os.WriteFile(path, []byte(buf.String()), 0644); err != nil {
-		fmt.Printf("Error writing dump: %v\n", err)
+		fmt.Fprintf(w, "Error writing dump: %v\n", err)
 		return
 	}
-	fmt.Printf("State dump saved to: %s\n", path)
+	fmt.Fprintf(w, "State dump saved to: %s\n", path)
 }
 
-func cmdBackup() {
+func cmdBackup(w io.Writer) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Fprintf(w, "Error: %v\n", err)
 		return
 	}
 	gclawDir := filepath.Join(home, ".gclaw")
@@ -1154,10 +1162,10 @@ func cmdBackup() {
 		"--exclude="+backupDir,
 		"-C", home, ".gclaw")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		fmt.Printf("Backup failed: %v\n%s\n", err, string(output))
+		fmt.Fprintf(w, "Backup failed: %v\n%s\n", err, string(output))
 		return
 	}
-	fmt.Printf("Backup saved to: %s\n", archive)
+	fmt.Fprintf(w, "Backup saved to: %s\n", archive)
 }
 
 func boolStr(cond bool, trueVal, falseVal string) string {
@@ -1201,42 +1209,42 @@ func getDiskUsage(path string) (string, error) {
 }
 
 
-func handleWeixinCommand(cmd string, ch *weixin.Channel) {
+func handleWeixinCommand(cmd string, ch *weixin.Channel, w io.Writer) {
 	args := strings.Fields(cmd)
 	if len(args) < 2 {
-		fmt.Println("Usage: /weixin login|logout|status")
+		fmt.Fprintln(w, "Usage: /weixin login|logout|status")
 		return
 	}
 	switch args[1] {
 	case "login":
-		fmt.Println("正在启动微信扫码登录...")
+		fmt.Fprintln(w, "正在启动微信扫码登录...")
 		if err := ch.Login(); err != nil {
-			fmt.Fprintf(os.Stderr, "登录失败: %v\n", err)
+			fmt.Fprintf(w, "登录失败: %v\n", err)
 		}
 	case "logout":
-		fmt.Println("正在解绑微信账号...")
+		fmt.Fprintln(w, "正在解绑微信账号...")
 		if err := ch.Logout(); err != nil {
-			fmt.Fprintf(os.Stderr, "解绑失败: %v\n", err)
+			fmt.Fprintf(w, "解绑失败: %v\n", err)
 		}
 	case "status":
 		s := ch.Status()
-		fmt.Println("\n--- 微信通道 ---")
+		fmt.Fprintln(w, "\n--- 微信通道 ---")
 		if s.Connected {
-			fmt.Println("状态: 已连接")
-			fmt.Printf("账号: %s\n", s.AccountID)
-			fmt.Printf("用户: %s\n", s.UserID)
+			fmt.Fprintln(w, "状态: 已连接")
+			fmt.Fprintf(w, "账号: %s\n", s.AccountID)
+			fmt.Fprintf(w, "用户: %s\n", s.UserID)
 			if !s.LastMsgAt.IsZero() {
-				fmt.Printf("最后消息: %s\n", s.LastMsgAt.Format("15:04:05"))
+				fmt.Fprintf(w, "最后消息: %s\n", s.LastMsgAt.Format("15:04:05"))
 			}
-			fmt.Printf("消息数: %d\n", s.MsgCount)
+			fmt.Fprintf(w, "消息数: %d\n", s.MsgCount)
 		} else {
-			fmt.Println("状态: 未连接")
+			fmt.Fprintln(w, "状态: 未连接")
 			if s.AccountID != "" {
-				fmt.Printf("账号: %s\n", s.AccountID)
+				fmt.Fprintf(w, "账号: %s\n", s.AccountID)
 			}
 		}
 	default:
-		fmt.Println("Usage: /weixin login|logout|status")
+		fmt.Fprintln(w, "Usage: /weixin login|logout|status")
 	}
 }
 

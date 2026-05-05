@@ -20,7 +20,7 @@ type Transcript struct {
 }
 
 func NewTranscript(styles Styles, theme Theme) *Transcript {
-	return &Transcript{styles: styles, theme: theme, atBottom: true}
+	return &Transcript{styles: styles, theme: theme, atBottom: true, cursorVisible: true}
 }
 
 func (tr *Transcript) Resize(w, h int) {

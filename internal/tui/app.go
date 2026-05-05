@@ -114,6 +114,15 @@ func (a *App) AppendWelcome(content string) {
 	})
 }
 
+func (a *App) AppendEvent(icon, source, content string) {
+	a.transcript.Append(TranscriptMsg{
+		Kind:      MsgEvent,
+		EventIcon: icon,
+		EventSrc:  source,
+		Content:   content,
+	})
+}
+
 func (a *App) SetBanner(version, model, mode string) {
 	parts := []string{"gclaw " + version}
 	if model != "" {
