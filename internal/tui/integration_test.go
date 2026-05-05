@@ -229,10 +229,12 @@ func TestSimStreaming(t *testing.T) {
 	}
 
 	s.respond("")
+	// Streaming continues on same assistant msg (real dialog has user msg between)
+	s.typeText("next"); s.submit()
 	s.streamChunk("Second response")
 
 	msgs = s.app.transcript.Messages()
-	if len(msgs) != 2 || msgs[1].Content != "Second response" {
+	if len(msgs) != 3 || msgs[2].Content != "Second response" {
 		t.Fatalf("after respond+stream: got %+v", msgs)
 	}
 }

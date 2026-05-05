@@ -24,17 +24,18 @@ type Deps struct {
 }
 
 type App struct {
-	deps       Deps
-	theme      Theme
-	styles     Styles
-	transcript *Transcript
-	composer   *Composer
-	statusbar  *StatusBar
-	approval   *ApprovalRequest
-	width      int
-	height     int
-	busy       bool
-	startTime  time.Time
+	deps        Deps
+	theme       Theme
+	styles      Styles
+	transcript  *Transcript
+	composer    *Composer
+	statusbar   *StatusBar
+	approval    *ApprovalRequest
+	width       int
+	height      int
+	busy        bool
+	startTime   time.Time
+	quitConfirm bool
 }
 
 func (a *App) SetSend(send func(msg tea.Msg)) {
@@ -44,15 +45,28 @@ func (a *App) SetSend(send func(msg tea.Msg)) {
 func NewApp(deps Deps) *App {
 	th := deps.Theme
 	st := th.Styles()
+	sb := NewStatusBar(th)
+	if deps.Config != nil {
+		sb.SetModel(deps.Config.Model.Default)
+	}
 	return &App{
 		deps:       deps,
 		theme:      th,
 		styles:     st,
 		transcript: NewTranscript(st, th),
 		composer:   NewComposer(),
-		statusbar:  NewStatusBar(th),
+		statusbar:  sb,
 		startTime:  time.Now(),
 	}
+}
+
+func (a *App) AppendWelcome(content string) {
+	a.transcript.Append(TranscriptMsg{
+		Kind:      MsgEvent,
+		EventIcon: "gclaw",
+		EventSrc:  "ready",
+		Content:   content,
+	})
 }
 
 func (a *App) Init() tea.Cmd {
@@ -77,11 +91,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentResponseMsg:
 		a.busy = false
 		a.statusbar.SetState("ready")
-		content := m.text
 		if m.err != nil {
-			content = "Error: " + m.err.Error()
+			a.transcript.Append(TranscriptMsg{Kind: MsgAssistant, Content: "Error: " + m.err.Error()})
+		} else if m.text != "" {
+			msgs := a.transcript.Messages()
+			if len(msgs) == 0 || msgs[len(msgs)-1].Kind != MsgAssistant {
+				a.transcript.Append(TranscriptMsg{Kind: MsgAssistant, Content: m.text})
+			}
 		}
-		a.transcript.Append(TranscriptMsg{Kind: MsgAssistant, Content: content})
 		return a, nil
 
 	case EventMsg:
@@ -102,7 +119,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		a.statusbar.SetElapsed(time.Since(a.startTime).Truncate(time.Second).String())
+		if a.quitConfirm {
+			a.quitConfirm = false
+		}
 		return a, tickCmd()
+
+	case quitConfirmTimeoutMsg:
+		a.quitConfirm = false
+		return a, nil
 	}
 	return a, nil
 }
@@ -122,6 +146,10 @@ func (a *App) View() tea.View {
 	} else {
 		composerView = a.renderComposer()
 	}
+	if a.quitConfirm {
+		hint := a.styles.Warning.Render("  再按 Ctrl+C 退出")
+		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, transcriptView, divider, statusView, composerView, hint))
+	}
 	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, transcriptView, divider, statusView, composerView))
 }
 
@@ -137,24 +165,33 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	code := msg.Code
 	mod := msg.Mod
 
-	// Ctrl+C
 	if code == 'c' && mod == tea.ModCtrl {
-		if a.composer.IsEmpty() {
+		if a.busy {
 			if a.deps.Agent != nil {
 				a.deps.Agent.Interrupt("user interrupt")
 			}
+			a.busy = false
+			a.statusbar.SetState("ready")
+			a.transcript.Append(TranscriptMsg{Kind: MsgEvent, EventIcon: "⚡", EventSrc: "interrupt", Content: "已中断"})
+			return a, nil
+		}
+		if !a.composer.IsEmpty() {
+			a.composer.Clear()
+			return a, nil
+		}
+		if a.quitConfirm {
 			return a, tea.Quit
 		}
-		a.composer.Clear()
-		return a, nil
+		a.quitConfirm = true
+		return a, quitConfirmTimeout()
 	}
-	// Ctrl+L
+	a.quitConfirm = false
+
 	if code == 'l' && mod == tea.ModCtrl {
 		a.transcript = NewTranscript(a.styles, a.theme)
 		a.transcript.Resize(a.width, a.height-6)
 		return a, nil
 	}
-	// Ctrl+Enter
 	if code == tea.KeyEnter && mod == tea.ModCtrl {
 		a.composer.InsertNewLine()
 		return a, nil
@@ -252,7 +289,7 @@ func (a *App) renderComposer() string {
 	}
 	text := a.composer.Text()
 	if text == "" {
-		parts = append(parts, a.styles.Prompt.Render("❯ ")+"_|")
+		parts = append(parts, a.styles.Prompt.Render("❯ "))
 	} else {
 		lines := strings.Split(text, "\n")
 		for i, line := range lines {
@@ -262,7 +299,6 @@ func (a *App) renderComposer() string {
 				parts = append(parts, "  "+line)
 			}
 		}
-		parts[len(parts)-1] += "▌"
 	}
 	for _, att := range a.composer.Attachments() {
 		icon := "📎"
@@ -275,16 +311,14 @@ func (a *App) renderComposer() string {
 	return strings.Join(parts, "\n")
 }
 
-// Messages
-
 type agentResponseMsg struct {
 	text string
 	err  error
 }
 
 type EventMsg struct {
-	Icon   string
-	Source string
+	Icon    string
+	Source  string
 	Content string
 }
 
@@ -293,9 +327,14 @@ type streamChunkMsg struct {
 }
 
 type tickMsg time.Time
+type quitConfirmTimeoutMsg time.Time
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func quitConfirmTimeout() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return quitConfirmTimeoutMsg(t) })
 }
 
 func runAgentCmd(deps Deps, input string, images []string) tea.Cmd {

@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	stdctx "context"
@@ -155,6 +155,8 @@ func runREPL() {
 	}
 
 	setupLogging(cfg.Logging.Level)
+	earlyLogBuf := tui.NewLogBuffer(1000)
+	slog.SetDefault(slog.New(earlyLogBuf.SlogHandler()))
 	slog.Info("gclaw starting", "version", Version, "autonomy", cfg.Agent.Autonomy)
 
 	// Initialize components
@@ -273,16 +275,16 @@ func runREPL() {
 	// Setup weixin channel
 	var weixinCh *weixin.Channel
 	if cfg.Channels.Weixin.Enabled {
-		fmt.Print("正在初始化微信通道...")
+		slog.Info("initializing weixin channel")
 		var err error
 		weixinCh, err = weixin.New(weixin.Config{
 			Verbose: cfg.Channels.Weixin.Verbose,
 			OnMessageHandled: func() {
-				fmt.Print("> ")
+				
 			},
 		})
 		if err != nil {
-			fmt.Printf(" 失败: %v\n", err)
+			slog.Warn("weixin init failed", "error", err)
 		} else {
 			// Separate agent instance for WeChat with its own conversation history.
 			weixinAgent := agent.New(agent.Config{
@@ -295,7 +297,7 @@ func runREPL() {
 			})
 			weixinCh.SetAgent(weixinAgent)
 			if weixinCh.HasStoredAccount() {
-				fmt.Println(" 发现已绑定账号")
+				slog.Info("weixin: stored account found")
 			}
 			if gw != nil {
 				gw.Register("weixin", weixinCh)
@@ -304,7 +306,7 @@ func runREPL() {
 			go func() {
 				bus := autonomous.NewEventBus()
 				if err := weixinCh.Start(stdctx.Background(), bus); err != nil {
-					fmt.Fprintf(os.Stderr, "\n微信通道启动失败: %v\n", err)
+					slog.Warn("weixin start failed", "error", err)
 				}
 			}()
 			time.Sleep(200 * time.Millisecond)
@@ -528,8 +530,7 @@ func runREPL() {
 
 	// Wire TUI
 	theme := tui.LoadTheme(cfg.TUI.Theme)
-	logBuf := tui.NewLogBuffer(1000)
-	slog.SetDefault(slog.New(logBuf.SlogHandler()))
+	logBuf := earlyLogBuf
 	hist := tui.NewHistory(config.ExpandPath("~/.gclaw/history"), cfg.TUI.History.MaxEntries)
 	compEng := tui.NewCompletionEngine(nil)
 
@@ -596,6 +597,8 @@ func runREPL() {
 			handleCommand(cmd, cmdContext)
 		},
 	})
+		app.AppendWelcome("type /help for commands")
+		
 
 	p := tea.NewProgram(app)
 	app.SetSend(p.Send)
