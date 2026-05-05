@@ -39,6 +39,10 @@ type App struct {
 	busy        bool
 	startTime   time.Time
 	quitConfirm bool
+	// Completion state
+	compItems []CompletionItem
+	compIdx   int
+	compActive bool
 }
 
 func (a *App) SetSend(send func(msg tea.Msg)) {
@@ -61,6 +65,38 @@ func NewApp(deps Deps) *App {
 		statusbar:  sb,
 		startTime:  time.Now(),
 	}
+}
+
+func (a *App) updateCompletions() {
+	if a.deps.CompEng == nil {
+		return
+	}
+	text := a.composer.Text()
+	if strings.HasPrefix(text, "/") && !strings.Contains(text, "\n") {
+		items := a.deps.CompEng.Match(text)
+		if len(items) > 0 {
+			a.compItems = items
+			a.compActive = true
+			if a.compIdx >= len(items) {
+				a.compIdx = 0
+			}
+			return
+		}
+	}
+	a.compItems = nil
+	a.compActive = false
+	a.compIdx = 0
+}
+
+func (a *App) applyCompletion() {
+	if !a.compActive || len(a.compItems) == 0 {
+		return
+	}
+	item := a.compItems[a.compIdx]
+	a.composer.SetInput(item.Text + " ")
+	a.compItems = nil
+	a.compActive = false
+	a.compIdx = 0
 }
 
 func (a *App) AppendWelcome(content string) {
@@ -168,11 +204,17 @@ func (a *App) View() tea.View {
 	} else {
 		composerView = a.renderComposer()
 	}
+	compView := a.renderCompletions()
+	parts := []string{transcriptView, divider, statusView}
+	if compView != "" {
+		parts = append(parts, compView)
+	}
+	parts = append(parts, composerView)
 	if a.quitConfirm {
 		hint := a.styles.Warning.Render("  再按 Ctrl+C 退出")
-		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, transcriptView, divider, statusView, composerView, hint))
+		parts = append(parts, hint)
 	}
-	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, transcriptView, divider, statusView, composerView))
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
 func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -226,13 +268,24 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return a.submitInput()
 	case tea.KeyEscape:
+		if a.compActive {
+			a.compItems = nil
+			a.compActive = false
+			a.compIdx = 0
+			return a, nil
+		}
 		a.composer.Clear()
+		return a, nil
+	case tea.KeyTab:
+		a.applyCompletion()
 		return a, nil
 	case tea.KeyBackspace:
 		a.composer.Backspace()
+		a.updateCompletions()
 		return a, nil
 	case tea.KeyDelete:
 		a.composer.Delete()
+		a.updateCompletions()
 		return a, nil
 	case tea.KeyLeft:
 		a.composer.MoveLeft()
@@ -247,6 +300,13 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.composer.MoveEnd()
 		return a, nil
 	case tea.KeyUp:
+		if a.compActive && len(a.compItems) > 0 {
+			a.compIdx--
+			if a.compIdx < 0 {
+				a.compIdx = len(a.compItems) - 1
+			}
+			return a, nil
+		}
 		if a.deps.History != nil {
 			if entry := a.deps.History.Older(); entry != "" {
 				a.composer.SetInput(entry)
@@ -254,6 +314,13 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case tea.KeyDown:
+		if a.compActive && len(a.compItems) > 0 {
+			a.compIdx++
+			if a.compIdx >= len(a.compItems) {
+				a.compIdx = 0
+			}
+			return a, nil
+		}
 		if a.deps.History != nil {
 			a.composer.SetInput(a.deps.History.Newer())
 		}
@@ -269,6 +336,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			for _, r := range msg.Text {
 				a.composer.InsertRune(r)
 			}
+			a.updateCompletions()
 		} else if code != 0 && code < 256 && code >= 32 {
 			a.composer.InsertRune(code)
 		}
@@ -281,6 +349,10 @@ func (a *App) submitInput() (tea.Model, tea.Cmd) {
 	if text == "" {
 		return a, nil
 	}
+	// Close completions on submit
+	a.compItems = nil
+	a.compActive = false
+	a.compIdx = 0
 	if strings.HasPrefix(text, "/") {
 		if a.deps.OnSlash != nil {
 			a.deps.OnSlash(text)
@@ -302,6 +374,28 @@ func (a *App) submitInput() (tea.Model, tea.Cmd) {
 	a.busy = true
 	a.statusbar.SetState("busy")
 	return a, runAgentCmd(a.deps, text, images)
+}
+
+func (a *App) renderCompletions() string {
+	if !a.compActive || len(a.compItems) == 0 {
+		return ""
+	}
+	maxVisible := 8
+	items := a.compItems
+	if len(items) > maxVisible {
+		items = items[:maxVisible]
+	}
+	var lines []string
+	for i, item := range items {
+		line := item.Display + " " + a.styles.Muted.Render("— "+item.Description)
+		if i == a.compIdx {
+			line = a.styles.CompActive.Render(line)
+		} else {
+			line = a.styles.Completion.Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (a *App) renderComposer() string {

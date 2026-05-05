@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"strconv"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -552,6 +553,7 @@ func runREPL() {
 		skillMgr:        skillMgr,
 		mcpMgr:          mcpMgr,
 		gw:              gw,
+		logBuf:          logBuf,
 	}
 
 	app := tui.NewApp(tui.Deps{
@@ -624,6 +626,8 @@ func runREPL() {
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 	}
+
+		hist.Save()
 }
 
 // cmdCtx holds all runtime dependencies needed by slash commands.
@@ -641,6 +645,7 @@ type cmdCtx struct {
 	skillMgr        *skill.Manager
 	mcpMgr          *mcp.Manager
 	gw              *gateway.Gateway
+	logBuf          *tui.LogBuffer
 }
 
 func handleCommand(cmd string, c *cmdCtx) {
@@ -905,6 +910,28 @@ Exit:
 		fmt.Println("\n--- Gateway Platforms ---")
 		for name, st := range statuses {
 			fmt.Printf("  %-10s connected=%v\n", name, st.Connected)
+		}
+
+	case cmd == "/logs" || strings.HasPrefix(cmd, "/logs "):
+		args := strings.Fields(cmd)
+		n := 20
+		if len(args) > 1 {
+			if args[1] == "-f" {
+				fmt.Println("Follow mode not yet supported in TUI. Use /logs [N] instead.")
+				break
+			}
+			if v, err := strconv.Atoi(args[1]); err == nil && v > 0 {
+				n = v
+			}
+		}
+		if c.logBuf == nil {
+			fmt.Println("Log buffer not available.")
+			break
+		}
+		lines := c.logBuf.Last(n)
+		fmt.Printf("\n--- Recent %d logs ---\n", len(lines))
+		for _, line := range lines {
+			fmt.Printf("[%s] %s\n", line.Level, line.Content)
 		}
 
 	// ---- Diagnostics ----
