@@ -127,78 +127,91 @@ func (a *App) View() tea.View {
 
 func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if a.approval != nil {
-		result := a.approval.HandleKey(msg.Text)
+		result := a.approval.HandleKey(msg.String())
 		if result != ApprovalPending {
 			a.approval = nil
 		}
 		return a, nil
 	}
 
-	text := msg.Text
-	switch {
-	case text == "ctrl+c":
+	code := msg.Code
+	mod := msg.Mod
+
+	// Ctrl+C
+	if code == 'c' && mod == tea.ModCtrl {
 		if a.composer.IsEmpty() {
-			a.deps.Agent.Interrupt("user interrupt")
+			if a.deps.Agent != nil {
+				a.deps.Agent.Interrupt("user interrupt")
+			}
 			return a, tea.Quit
 		}
 		a.composer.Clear()
 		return a, nil
-	case text == "ctrl+l":
+	}
+	// Ctrl+L
+	if code == 'l' && mod == tea.ModCtrl {
 		a.transcript = NewTranscript(a.styles, a.theme)
 		a.transcript.Resize(a.width, a.height-6)
 		return a, nil
-	case text == "esc":
-		a.composer.Clear()
+	}
+	// Ctrl+Enter
+	if code == tea.KeyEnter && mod == tea.ModCtrl {
+		a.composer.InsertNewLine()
 		return a, nil
-	case text == "enter":
+	}
+
+	switch code {
+	case tea.KeyEnter:
 		if a.busy {
 			return a, nil
 		}
 		return a.submitInput()
-	case text == "ctrl+enter":
-		a.composer.InsertNewLine()
+	case tea.KeyEscape:
+		a.composer.Clear()
 		return a, nil
-	case text == "backspace":
+	case tea.KeyBackspace:
 		a.composer.Backspace()
 		return a, nil
-	case text == "delete":
+	case tea.KeyDelete:
 		a.composer.Delete()
 		return a, nil
-	case text == "left":
+	case tea.KeyLeft:
 		a.composer.MoveLeft()
 		return a, nil
-	case text == "right":
+	case tea.KeyRight:
 		a.composer.MoveRight()
 		return a, nil
-	case text == "home":
+	case tea.KeyHome:
 		a.composer.MoveHome()
 		return a, nil
-	case text == "end":
+	case tea.KeyEnd:
 		a.composer.MoveEnd()
 		return a, nil
-	case text == "up":
+	case tea.KeyUp:
 		if a.deps.History != nil {
 			if entry := a.deps.History.Older(); entry != "" {
 				a.composer.SetInput(entry)
 			}
 		}
 		return a, nil
-	case text == "down":
+	case tea.KeyDown:
 		if a.deps.History != nil {
 			a.composer.SetInput(a.deps.History.Newer())
 		}
 		return a, nil
-	case text == "pgup":
+	case tea.KeyPgUp:
 		a.transcript.ScrollUp(a.transcript.height)
 		return a, nil
-	case text == "pgdown":
+	case tea.KeyPgDown:
 		a.transcript.ScrollDown(a.transcript.height)
 		return a, nil
 	default:
-		if msg.Text != "" && len(msg.Text) > 0 {
+		if msg.Text != "" {
 			for _, r := range msg.Text {
 				a.composer.InsertRune(r)
 			}
+		} else if code != 0 && code < 256 && code >= 32 {
+			a.composer.InsertRune(code)
 		}
 		return a, nil
 	}

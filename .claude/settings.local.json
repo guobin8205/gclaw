@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//e/repos/**)",
+      "Read(//c/Users/guobi/**)",
+      "Read(//e//**)",
+      "WebSearch",
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(go get *)",
+      "Bash(set GOPROXY=https://goproxy.cn,direct)",
+      "PowerShell(go get *)",
+      "Bash(./gclaw.exe)",
+      "Bash(gh api *)"
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+(Get-Date).AddDays(-7).ToString('yyyy-MM-dd')

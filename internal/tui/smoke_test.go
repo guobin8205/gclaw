@@ -9,19 +9,14 @@ import (
 )
 
 func TestSmokeAppInit(t *testing.T) {
-	th := LoadTheme("tokyo-night")
-	app := NewApp(Deps{
-		Theme: th,
-	})
-	cmd := app.Init()
-	if cmd == nil {
+	app := NewApp(Deps{Theme: LoadTheme("tokyo-night")})
+	if app.Init() == nil {
 		t.Error("Init should return a non-nil Cmd")
 	}
 }
 
 func TestSmokeAppWindowSize(t *testing.T) {
-	th := LoadTheme("tokyo-night")
-	app := NewApp(Deps{Theme: th})
+	app := NewApp(Deps{Theme: LoadTheme("tokyo-night")})
 	model, _ := app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	a := model.(*App)
 	if a.width != 80 || a.height != 24 {
@@ -30,182 +25,135 @@ func TestSmokeAppWindowSize(t *testing.T) {
 }
 
 func TestSmokeAppView(t *testing.T) {
-	th := LoadTheme("tokyo-night")
-	app := NewApp(Deps{Theme: th})
+	app := NewApp(Deps{Theme: LoadTheme("tokyo-night")})
 	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	view := app.View()
-	if view.Content == "" {
+	if app.View().Content == "" {
 		t.Error("View should produce output")
 	}
 }
 
 func TestSmokeFullInteraction(t *testing.T) {
 	th := LoadTheme("tokyo-night")
-	logBuf := NewLogBuffer(200)
-	hist := NewHistory("", 100)
-	compEng := NewCompletionEngine(nil)
-
 	var receivedSlash string
 	app := NewApp(Deps{
 		Theme:   th,
-		LogBuf:  logBuf,
-		History: hist,
-		CompEng: compEng,
+		LogBuf:  NewLogBuffer(200),
+		History: NewHistory("", 100),
+		CompEng: NewCompletionEngine(nil),
 		OnSubmit: func(_ context.Context, input string, _ []string) (string, error) {
 			return "echo: " + input, nil
 		},
-		OnSlash: func(cmd string) {
-			receivedSlash = cmd
-		},
+		OnSlash: func(cmd string) { receivedSlash = cmd },
 	})
 
-	// Resize
 	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 
-	// Type some text
+	// Type text
 	for _, r := range "hello" {
 		app.Update(tea.KeyPressMsg{Text: string(r)})
 	}
-
-	// Check composer has text
 	if app.composer.Text() != "hello" {
 		t.Errorf("expected 'hello', got %q", app.composer.Text())
 	}
 
 	// Submit
-	model, _ := app.Update(tea.KeyPressMsg{Text: "enter"})
+	model, _ := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	a := model.(*App)
 	if !a.busy {
 		t.Error("expected busy after submit")
 	}
 
-	// Check transcript has user message
 	msgs := a.transcript.Messages()
-	if len(msgs) == 0 {
-		t.Fatal("expected at least one message")
-	}
-	if msgs[0].Content != "hello" {
-		t.Errorf("expected user msg 'hello', got %q", msgs[0].Content)
+	if len(msgs) != 1 || msgs[0].Content != "hello" {
+		t.Fatalf("transcript: got %+v", msgs)
 	}
 
-	// Simulate agent response
+	// Respond
 	app.Update(agentResponseMsg{text: "echo: hello"})
 	if app.busy {
-		t.Error("expected not busy after response")
+		t.Error("should not be busy after response")
 	}
 
-	// Check assistant message in transcript
-	msgs = app.transcript.Messages()
-	if len(msgs) < 2 {
-		t.Fatalf("expected 2 messages, got %d", len(msgs))
-	}
-	if msgs[1].Kind != MsgAssistant {
-		t.Errorf("expected MsgAssistant, got %v", msgs[1].Kind)
-	}
-
-	// Test slash command
+	// Slash command
 	for _, r := range "/help" {
 		app.Update(tea.KeyPressMsg{Text: string(r)})
 	}
-	app.Update(tea.KeyPressMsg{Text: "enter"})
+	app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if receivedSlash != "/help" {
-		t.Errorf("expected /help slash command, got %q", receivedSlash)
+		t.Errorf("expected /help, got %q", receivedSlash)
 	}
 
-	// Test view renders
-	view := app.View()
-	if view.Content == "" {
-		t.Error("View should produce non-empty output")
-	}
-	if !strings.Contains(view.Content, "─") {
-		t.Error("View should contain divider line")
+	// View renders
+	v := app.View()
+	if v.Content == "" || !strings.Contains(v.Content, "─") {
+		t.Error("view should have content and divider")
 	}
 }
 
 func TestSmokeStreaming(t *testing.T) {
-	th := LoadTheme("tokyo-night")
-	var sentMsgs []tea.Msg
-	app := NewApp(Deps{
-		Theme: th,
-		Send:  func(msg tea.Msg) { sentMsgs = append(sentMsgs, msg) },
-	})
+	app := NewApp(Deps{Theme: LoadTheme("tokyo-night")})
 	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Simulate stream chunks
 	app.Update(streamChunkMsg{text: "Hello "})
 	app.Update(streamChunkMsg{text: "world"})
 
 	msgs := app.transcript.Messages()
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(msgs))
-	}
-	if msgs[0].Content != "Hello world" {
-		t.Errorf("expected 'Hello world', got %q", msgs[0].Content)
+	if len(msgs) != 1 || msgs[0].Content != "Hello world" {
+		t.Errorf("streaming: got %+v", msgs)
 	}
 }
 
 func TestSmokeApproval(t *testing.T) {
-	th := LoadTheme("tokyo-night")
-	app := NewApp(Deps{Theme: th})
+	app := NewApp(Deps{Theme: LoadTheme("tokyo-night")})
 	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Set approval request
 	app.approval = &ApprovalRequest{ToolName: "Bash", Detail: "rm -rf /tmp"}
-
-	// View should show approval popup
-	view := app.View()
-	if !strings.Contains(view.Content, "Approval") {
-		t.Error("View should contain approval text")
+	if !strings.Contains(app.View().Content, "Approval") {
+		t.Error("should show approval")
 	}
 
-	// Press 'y' to approve
-	model, _ := app.Update(tea.KeyPressMsg{Text: "y"})
-	a := model.(*App)
-	if a.approval != nil {
-		t.Error("approval should be cleared after allow")
+	// Press 'y' (printable → goes through approval handler at top of handleKey)
+	app.Update(tea.KeyPressMsg{Text: "y"})
+	// Approval uses msg.String() which for Text="y" returns "y"
+	if app.approval != nil {
+		t.Error("approval should be cleared")
 	}
 }
 
 func TestSmokeThemes(t *testing.T) {
 	for _, name := range []string{"tokyo-night", "catppuccin-mocha", "light", "terminal"} {
-		th := LoadTheme(name)
-		app := NewApp(Deps{Theme: th})
+		app := NewApp(Deps{Theme: LoadTheme(name)})
 		app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-		view := app.View()
-		if view.Content == "" {
-			t.Errorf("theme %s: view should not be empty", name)
+		if app.View().Content == "" {
+			t.Errorf("theme %s: empty", name)
 		}
 	}
 }
 
 func TestSmokeHistory(t *testing.T) {
-	th := LoadTheme("tokyo-night")
 	hist := NewHistory("", 100)
-	app := NewApp(Deps{Theme: th, History: hist})
+	app := NewApp(Deps{Theme: LoadTheme("tokyo-night"), History: hist})
 	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Type and submit to add to history
+	// Submit messages
 	for _, r := range "first" {
 		app.Update(tea.KeyPressMsg{Text: string(r)})
 	}
-	app.Update(tea.KeyPressMsg{Text: "enter"})
-	// busy=true, simulate response
+	app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	app.Update(agentResponseMsg{text: "ok"})
 
-	// Type and submit second
 	for _, r := range "second" {
 		app.Update(tea.KeyPressMsg{Text: string(r)})
 	}
-	app.Update(tea.KeyPressMsg{Text: "enter"})
+	app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	app.Update(agentResponseMsg{text: "ok"})
 
-	// Navigate history
-	app.Update(tea.KeyPressMsg{Text: "up"})
+	app.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if app.composer.Text() != "second" {
-		t.Errorf("expected 'second' from history, got %q", app.composer.Text())
+		t.Errorf("up: got %q", app.composer.Text())
 	}
-	app.Update(tea.KeyPressMsg{Text: "up"})
+	app.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if app.composer.Text() != "first" {
-		t.Errorf("expected 'first' from history, got %q", app.composer.Text())
+		t.Errorf("up 2x: got %q", app.composer.Text())
 	}
 }

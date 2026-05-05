@@ -1,0 +1,183 @@
+<h2>gclaw TUI 设计 v3</h2>
+<p class="subtitle">输入系统：多行编辑 + 粘贴 + 图片 + 快捷键</p>
+
+<div class="mockup" style="margin-bottom: 24px;">
+  <div class="mockup-header">Preview: 多行输入场景</div>
+  <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; font-size: 12px; padding: 0; line-height: 1.6; overflow: hidden;">
+    <!-- Transcript Area -->
+    <div style="min-height: 160px; padding: 8px 12px;">
+      <div style="color: #7aa2f7; margin-bottom: 10px;">
+        <span style="font-weight: bold;">gclaw</span> <span style="color: #565f89;">v0.12.0</span> — <span style="color: #9ece6a;">deepseek-v4-flash</span> | interactive
+      </div>
+      <div style="margin-bottom: 6px;">
+        <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #c0caf5;">帮我分析这个截图里的报错</span>
+      </div>
+      <div style="margin-left: 16px; margin-bottom: 6px; color: #565f89;">
+        <span style="color: #bb9af7;">🖼 image</span> screenshot.png <span style="color: #9ece6a;">attached</span>
+      </div>
+      <div style="margin-left: 16px; color: #c0caf5;">
+        我看到截图中的报错是...
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div style="border-top: 1px solid #3b3d57;"></div>
+
+    <!-- Composer Zone: Multi-line editing -->
+    <div style="padding: 6px 12px; background: #16161e;">
+      <!-- Status bar -->
+      <div style="font-size: 11px; color: #565f89; margin-bottom: 4px;">
+        <span style="color: #9ece6a;">●</span> deepseek-v4-flash
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        ctx: 1.2k/200k
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        5:36:20
+      </div>
+
+      <!-- Multi-line input buffer -->
+      <div style="margin-bottom: 4px;">
+        <div style="display: flex; align-items: center;">
+          <span style="color: #ff9e64; font-weight: bold; margin-right: 6px;">❯</span>
+          <span style="color: #c0caf5;">帮我看下这个函数有什么问题：</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-left: 20px;">
+          <span style="color: #c0caf5;">func main() {</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-left: 20px;">
+          <span style="color: #c0caf5;">    fmt.Println("hello")_|</span>
+        </div>
+      </div>
+
+      <!-- Attachment indicator -->
+      <div style="font-size: 11px; color: #565f89; margin-bottom: 2px;">
+        <span style="color: #bb9af7;">📎</span> error.log <span style="color: #565f89;">(2.3KB)</span>
+        <span style="color: #f7768e; cursor: pointer; margin-left: 4px;">✕</span>
+        <span style="margin-left: 12px; color: #bb9af7;">🖼</span> screenshot.png <span style="color: #565f89;">(156KB)</span>
+        <span style="color: #f7768e; cursor: pointer; margin-left: 4px;">✕</span>
+      </div>
+
+      <!-- Help hint -->
+      <div style="font-size: 10px; color: #3b3d57; margin-top: 2px;">
+        Ctrl+Enter: 换行 · Enter: 发送 · Ctrl+V: 粘贴图片/文本 · Ctrl+I: 附加文件 · Esc: 取消
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-bottom: 24px;">
+  <div class="mockup-header">Preview: 粘贴图片场景</div>
+  <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; font-size: 12px; padding: 0; line-height: 1.6; overflow: hidden;">
+    <!-- Transcript Area -->
+    <div style="min-height: 200px; padding: 8px 12px;">
+      <div style="color: #7aa2f7; margin-bottom: 10px;">
+        <span style="font-weight: bold;">gclaw</span> <span style="color: #565f89;">v0.12.0</span> — <span style="color: #9ece6a;">deepseek-v4-flash</span> | interactive
+      </div>
+      <div style="margin-bottom: 6px;">
+        <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #c0caf5;">这张图里的表格数据帮我整理成 JSON</span>
+      </div>
+      <!-- Image attachment in transcript -->
+      <div style="margin-left: 16px; margin-bottom: 10px;">
+        <div style="background: #24283b; border: 1px solid #3b3d57; border-radius: 4px; padding: 8px; display: inline-block; max-width: 300px;">
+          <div style="color: #bb9af7; font-size: 11px; margin-bottom: 4px;">🖼 clipboard-image.png</div>
+          <div style="background: #1a1b26; height: 80px; border-radius: 2px; display: flex; align-items: center; justify-content: center; color: #565f89; font-size: 11px;">
+            [image preview: 800×600]
+          </div>
+        </div>
+      </div>
+      <!-- Agent response -->
+      <div style="margin-left: 16px; color: #c0caf5;">
+        <div style="margin-bottom: 2px;">
+          <span style="color: #9ece6a;">⚙ vision</span>
+          <span style="color: #565f89;"> analyzing clipboard-image.png</span>
+          <span style="color: #565f89;"> 1.8s</span>
+        </div>
+        <div>根据图片中的表格，整理如下：</div>
+        <div style="color: #565f89; margin-top: 4px;">```json</div>
+        <div>[{"name": "张三", "age": 28}, ...]</div>
+        <div style="color: #565f89;">```</div>
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div style="border-top: 1px solid #3b3d57;"></div>
+
+    <!-- Composer -->
+    <div style="padding: 6px 12px; background: #16161e;">
+      <div style="font-size: 11px; color: #565f89; margin-bottom: 4px;">
+        <span style="color: #9ece6a;">●</span> deepseek-v4-flash
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        ctx: 4.5k/200k
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        5:42:10
+      </div>
+      <div style="display: flex; align-items: center;">
+        <span style="color: #ff9e64; font-weight: bold; margin-right: 6px;">❯</span>
+        <span style="color: #c0caf5;">_|</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>输入系统交互规范</h3>
+  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Enter</td>
+      <td style="padding: 6px;">发送消息（单行模式直接发送）</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Ctrl+Enter</td>
+      <td style="padding: 6px;">换行（插入新行到多行缓冲区）</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Backspace</td>
+      <td style="padding: 6px;">删除光标前字符，行首时合并到上一行</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Delete</td>
+      <td style="padding: 6px;">删除光标后字符</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">← → Home End</td>
+      <td style="padding: 6px;">光标移动（跨行）</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Ctrl+V</td>
+      <td style="padding: 6px;">粘贴文本；若剪贴板含图片则附加为图片附件</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Ctrl+I / 拖拽文件</td>
+      <td style="padding: 6px;">附加文件到消息（图片走 Vision，文本直接注入）</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Ctrl+C</td>
+      <td style="padding: 6px;">空输入时中断 agent；有输入时清空当前输入</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Esc</td>
+      <td style="padding: 6px;">取消当前输入/关闭补全下拉</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">↑ ↓</td>
+      <td style="padding: 6px;">无补全时浏览历史；有补全时切换选项</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">Tab</td>
+      <td style="padding: 6px;">应用当前补全建议</td>
+    </tr>
+  </table>
+</div>
+
+<div class="section" style="margin-top: 16px;">
+  <h3>图片/文件处理流程</h3>
+  <div style="font-family: monospace; font-size: 12px; line-height: 1.8; color: #a0a0a0;">
+    <div>Ctrl+V (clipboard has image)</div>
+    <div style="margin-left: 16px;">→ 保存为 ~/.gclaw/tmp/clipboard-{ts}.png</div>
+    <div style="margin-left: 16px;">→ 底部显示附件标签 <span style="color: #bb9af7;">🖼 clipboard-image.png ✕</span></div>
+    <div style="margin-left: 16px;">→ 发送时自动调用 vision 工具分析</div>
+    <div style="margin-top: 8px;">Ctrl+I / drag file</div>
+    <div style="margin-left: 16px;">→ .png/.jpg/.jpeg → 图片附件（走 vision）</div>
+    <div style="margin-left: 16px;">→ .txt/.log/.md → 文本附件（注入到 prompt）</div>
+    <div style="margin-left: 16px;">→ 其他格式 → 提示不支持</div>
+  </div>
+</div>

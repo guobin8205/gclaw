@@ -259,7 +259,6 @@ func runREPL() {
 		ContextMgr:   ctxManager,
 	})
 
-	fmt.Printf("gclaw %s — %s mode | %s | type /help\n\n", Version, cfg.Agent.Autonomy, cfg.Model.Default)
 
 	// Setup gateway
 	var gw *gateway.Gateway
@@ -393,7 +392,6 @@ func runREPL() {
 		}
 		cronSched.Start()
 		defer cronSched.Stop()
-		fmt.Printf("Cron scheduler active: %d jobs loaded.\n", len(cfg.Cron.Jobs))
 	}
 
 	// Setup delegate dispatcher and meta tool references
@@ -526,13 +524,12 @@ func runREPL() {
 
 		scheduler.Start()
 		defer scheduler.Stop()
-		fmt.Println("Autonomous mode active. The agent will work independently.")
-		fmt.Println("Enter messages to send to the agent, or /help for commands.")
 	}
 
 	// Wire TUI
 	theme := tui.LoadTheme(cfg.TUI.Theme)
 	logBuf := tui.NewLogBuffer(1000)
+	slog.SetDefault(slog.New(logBuf.SlogHandler()))
 	hist := tui.NewHistory(config.ExpandPath("~/.gclaw/history"), cfg.TUI.History.MaxEntries)
 	compEng := tui.NewCompletionEngine(nil)
 

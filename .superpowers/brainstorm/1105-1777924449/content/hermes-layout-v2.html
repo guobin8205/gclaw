@@ -1,0 +1,195 @@
+<h2>gclaw TUI 设计 v2</h2>
+<p class="subtitle">状态栏靠左 + 工具调用树状展示</p>
+
+<div class="mockup" style="margin-bottom: 24px;">
+  <div class="mockup-header">Preview: 完整交互场景</div>
+  <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; font-size: 12px; padding: 0; line-height: 1.6; overflow: hidden;">
+    <!-- Transcript Area -->
+    <div style="min-height: 340px; padding: 8px 12px; overflow-y: auto; position: relative;">
+      <!-- Banner -->
+      <div style="color: #7aa2f7; margin-bottom: 10px;">
+        <span style="font-weight: bold;">gclaw</span> <span style="color: #565f89;">v0.12.0</span> — <span style="color: #9ece6a;">deepseek-v4-flash</span> | interactive
+      </div>
+
+      <!-- User message -->
+      <div style="margin-bottom: 6px;">
+        <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #c0caf5;">帮我配置微信公众号接入</span>
+      </div>
+
+      <!-- Tool trail tree (agent turn) -->
+      <div style="margin-left: 16px; margin-bottom: 10px;">
+        <!-- Top-level thinking indicator -->
+        <div style="color: #565f89; margin-bottom: 4px;">
+          <span style="color: #bb9af7;">⚡ delegate_task</span> <span style="color: #565f89;">配置微信公众号接入</span>
+        </div>
+
+        <div style="margin-left: 20px; border-left: 1px solid #3b3d57; padding-left: 12px;">
+          <!-- Sub-agent: skill call -->
+          <div style="margin-bottom: 2px;">
+            <span style="color: #7aa2f7;">┊</span> <span style="color: #e0af68;">★ skill: weixin_setup</span>
+          </div>
+
+          <!-- Tool calls within sub-agent -->
+          <div style="margin-left: 16px; border-left: 1px solid #3b3d57; padding-left: 12px;">
+            <div style="margin-bottom: 2px;">
+              <span style="color: #7aa2f7;">┊</span> <span style="color: #9ece6a;">⚙ grep</span>
+              <span style="color: #565f89;"> weixin.*setup|wechat|setup_platform</span>
+              <span style="color: #565f89;"> 0.4s</span>
+            </div>
+            <div style="margin-bottom: 2px;">
+              <span style="color: #7aa2f7;">┊</span> <span style="color: #ff9e64;">$</span>
+              <span style="color: #565f89;"> grep -n "weixin\|WeChat" config.go | head -20</span>
+              <span style="color: #565f89;"> 0.2s</span>
+            </div>
+            <div style="margin-bottom: 2px;">
+              <span style="color: #7aa2f7;">┊</span> <span style="color: #9ece6a;">⚙ read</span>
+              <span style="color: #565f89;"> internal/channel/weixin/client.go</span>
+              <span style="color: #565f89;"> 0.8s</span>
+            </div>
+            <div style="margin-bottom: 2px;">
+              <span style="color: #7aa2f7;">┊</span> <span style="color: #9ece6a;">⚙ read</span>
+              <span style="color: #565f89;"> internal/config/config.go</span>
+              <span style="color: #565f89;"> 0.6s</span>
+            </div>
+            <div style="margin-bottom: 2px;">
+              <span style="color: #7aa2f7;">┊</span> <span style="color: #ff9e64;">$</span>
+              <span style="color: #565f89;"> grep -n "WEIXIN" config.go</span>
+              <span style="color: #565f89;"> 0.2s</span>
+            </div>
+          </div>
+
+          <!-- Streaming tool call (in progress) -->
+          <div style="margin-bottom: 2px;">
+            <span style="color: #7aa2f7;">┊</span> <span style="color: #bb9af7;">⚙ write</span>
+            <span style="color: #565f89;"> .gclaw/config.yaml</span>
+            <span style="color: #e0af68;"> ...</span>
+            <span style="animation: blink 1s infinite; color: #e0af68;">⠋</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Separator -->
+      <div style="border-top: 1px dashed #3b3d57; margin: 8px 0;"></div>
+
+      <!-- Simple user message with inline tool -->
+      <div style="margin-bottom: 6px;">
+        <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #c0caf5;">搜索一下最新的 Go 1.26 发布日志</span>
+      </div>
+
+      <div style="margin-left: 16px; margin-bottom: 6px;">
+        <div style="margin-bottom: 2px;">
+          <span style="color: #9ece6a;">⚙ web_search</span>
+          <span style="color: #565f89;"> Go 1.26 release notes</span>
+          <span style="color: #565f89;"> 1.2s</span>
+        </div>
+        <div style="margin-bottom: 2px;">
+          <span style="color: #9ece6a;">⚙ web_extract</span>
+          <span style="color: #565f89;"> https://go.dev/doc/go1.26</span>
+          <span style="color: #565f89;"> 2.1s</span>
+        </div>
+      </div>
+
+      <div style="margin-left: 16px; color: #c0caf5;">
+        Go 1.26 于 2026 年 3 月发布，主要更新包括：<span style="color: #565f89;">...</span>
+      </div>
+
+      <!-- Scrollbar -->
+      <div style="position: absolute; right: 2px; top: 8px; bottom: 8px; width: 1px; background: #3b3d57;"></div>
+      <div style="position: absolute; right: 2px; top: 40px; height: 60px; width: 1px; background: #7aa2f7;"></div>
+    </div>
+
+    <!-- Divider -->
+    <div style="border-top: 1px solid #3b3d57;"></div>
+
+    <!-- Composer Zone -->
+    <div style="padding: 6px 12px; background: #16161e;">
+      <!-- Status bar LEFT aligned -->
+      <div style="font-size: 11px; color: #565f89; margin-bottom: 4px;">
+        <span style="color: #9ece6a;">●</span> deepseek-v4-flash
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        ctx: 1.2k/200k
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        cron: 1 job
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        checkpoint: on
+        <span style="margin: 0 8px; color: #3b3d57;">│</span>
+        5:36:20
+      </div>
+
+      <!-- Queue preview (when busy) -->
+      <div style="font-size: 11px; color: #565f89; margin-bottom: 2px;">
+        <span style="color: #e0af68;">⏳ 2 queued</span> /model gpt-4o · /status
+      </div>
+
+      <!-- Completion dropdown -->
+      <div style="background: #24283b; border: 1px solid #3b3d57; border-radius: 4px; margin-bottom: 4px; padding: 4px 8px;">
+        <div style="background: #283457; padding: 2px 6px; border-radius: 2px;">
+          <span style="color: #bb9af7;">/help</span> <span style="color: #565f89;">— Show available commands</span>
+        </div>
+        <div style="padding: 2px 6px;">
+          <span style="color: #c0caf5;">/logs</span> <span style="color: #565f89;">— View recent logs [N]</span>
+        </div>
+        <div style="padding: 2px 6px;">
+          <span style="color: #c0caf5;">/model</span> <span style="color: #565f89;">— Switch model</span>
+        </div>
+        <div style="padding: 2px 6px;">
+          <span style="color: #c0caf5;">/status</span> <span style="color: #c0caf5;">/tools</span> <span style="color: #c0caf5;">/skills</span> <span style="color: #565f89;">...</span>
+        </div>
+      </div>
+
+      <!-- Input line -->
+      <div style="display: flex; align-items: center;">
+        <span style="color: #ff9e64; font-weight: bold; margin-right: 6px;">❯</span>
+        <span style="color: #bb9af7;">/</span><span style="color: #c0caf5;">_|</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>工具调用展示规范</h3>
+  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #9ece6a; white-space: nowrap;">⚙ read/grep/glob</td>
+      <td style="padding: 6px;">文件操作类，显示目标路径</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #ff9e64; white-space: nowrap;">$ bash</td>
+      <td style="padding: 6px;">Shell 命令，显示命令摘要</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #bb9af7; white-space: nowrap;">⚡ delegate_task</td>
+      <td style="padding: 6px;">Sub-agent 委派，嵌套缩进显示子调用</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #e0af68; white-space: nowrap;">★ skill</td>
+      <td style="padding: 6px;">Skill 调用，嵌套展示内部工具链</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #9ece6a; white-space: nowrap;">⚙ web_search/extract</td>
+      <td style="padding: 6px;">网络工具，显示查询或 URL</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #f7768e; white-space: nowrap;">⚙ write/patch</td>
+      <td style="padding: 6px;">写操作，checkpoint 自动快照</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px; color: #e0af68; white-space: nowrap;">⠋ spinning</td>
+      <td style="padding: 6px;">进行中动画 + 省略号</td>
+    </tr>
+  </table>
+</div>
+
+<div class="section" style="margin-top: 16px;">
+  <h3>嵌套缩进规则</h3>
+  <div style="font-family: monospace; font-size: 12px; line-height: 1.8; color: #a0a0a0;">
+    <div style="color: #bb9af7;">delegate_task</div>
+    <div style="margin-left: 20px; border-left: 1px solid #3b3d57; padding-left: 12px;">
+      <div style="color: #e0af68;">★ skill: xxx</div>
+      <div style="margin-left: 16px; border-left: 1px solid #3b3d57; padding-left: 12px;">
+        <div style="color: #9ece6a;">⚙ read · ⚙ grep · $ bash</div>
+      </div>
+      <div style="color: #9ece6a;">⚙ write config.yaml ...</div>
+    </div>
+  </div>
+</div>

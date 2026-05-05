@@ -1,0 +1,107 @@
+<h2>TUI 布局方案对比</h2>
+<p class="subtitle">gclaw 基于 Bubble Tea 的三种布局方向</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>经典上下分栏</h3>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-header">Preview: 经典上下分栏</div>
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 13px; padding: 12px;">
+          <div style="border-bottom: 1px solid #3b3d57; padding-bottom: 8px; margin-bottom: 8px;">
+            <div style="color: #7aa2f7;">gclaw dev | deepseek-v4-flash | interactive</div>
+          </div>
+          <div style="min-height: 160px; margin-bottom: 8px;">
+            <div><span style="color: #9ece6a;">&gt;</span> 你好</div>
+            <div style="color: #c0caf5; margin-left: 12px;">你好！有什么我可以帮你的吗？</div>
+            <div style="margin-top: 8px;"><span style="color: #9ece6a;">&gt;</span> /help</div>
+            <div style="color: #565f89; margin-left: 12px;">Available commands:</div>
+            <div style="color: #565f89; margin-left: 12px;">  /clear  /compact  /help  /model ...</div>
+          </div>
+          <div style="border-top: 1px solid #3b3d57; padding-top: 8px;">
+            <div style="display: flex; gap: 4px;">
+              <span style="color: #bb9af7; background: #283457; padding: 2px 8px; border-radius: 3px;">/help</span>
+              <span style="color: #565f89;">/history</span>
+              <span style="color: #565f89;">/model</span>
+              <span style="color: #565f89;">/status</span>
+              <span style="color: #565f89;">/tools</span>
+              <span style="color: #565f89;">...</span>
+            </div>
+            <div style="margin-top: 6px;">
+              <span style="color: #ff9e64;">❯</span> <span style="color: #c0caf5;">_|</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="margin-top: 8px; color: #a0a0a0;">状态栏 + 输出区 + 补全提示 + 输入框，经典 REPL 分层</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>三栏式（聊天 + 侧边信息）</h3>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-header">Preview: 三栏式布局</div>
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 13px; padding: 12px;">
+          <div style="display: flex; gap: 8px;">
+            <div style="flex: 2;">
+              <div style="border-bottom: 1px solid #3b3d57; padding-bottom: 4px; margin-bottom: 6px; color: #7aa2f7;">gclaw dev | deepseek-v4-flash</div>
+              <div style="min-height: 140px;">
+                <div><span style="color: #9ece6a;">&gt;</span> 你好</div>
+                <div style="color: #c0caf5; margin-left: 8px;">你好！有什么我可以帮你的吗？</div>
+              </div>
+              <div style="border-top: 1px solid #3b3d57; padding-top: 4px;">
+                <span style="color: #ff9e64;">❯</span> <span style="color: #c0caf5;">_|</span>
+              </div>
+            </div>
+            <div style="flex: 1; border-left: 1px solid #3b3d57; padding-left: 8px;">
+              <div style="color: #7aa2f7; font-size: 11px; margin-bottom: 4px;">INFO</div>
+              <div style="color: #565f89; font-size: 11px;">cron: test-noagent</div>
+              <div style="color: #565f89; font-size: 11px;">next: 00:00</div>
+              <div style="color: #565f89; font-size: 11px; margin-top: 8px;">checkpoint: on</div>
+              <div style="color: #565f89; font-size: 11px;">browser: off</div>
+              <div style="color: #565f89; font-size: 11px;">weixin: off</div>
+              <div style="color: #565f89; font-size: 11px; margin-top: 8px;">tokens: 1.2k/3.4k</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="margin-top: 8px; color: #a0a0a0;">主聊天区 + 右侧状态/信息面板，空间利用率高但在窄终端中体验差</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>极简浮动层</h3>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-header">Preview: 极简浮动层</div>
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 13px; padding: 12px;">
+          <div style="min-height: 180px;">
+            <div><span style="color: #9ece6a;">&gt;</span> 你好</div>
+            <div style="color: #c0caf5; margin-left: 12px;">你好！有什么我可以帮你的吗？</div>
+            <div style="margin-top: 8px;"><span style="color: #9ece6a;">&gt;</span> /status</div>
+          </div>
+          <div style="position: relative; border-top: 1px solid #3b3d57; padding-top: 6px;">
+            <div style="position: absolute; right: 0; top: -24px; background: #283457; border-radius: 4px; padding: 4px 8px; font-size: 11px; color: #7aa2f7;">
+              deepseek-v4-flash | 1.2k tokens | cron: active
+            </div>
+            <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+              <span style="color: #bb9af7; background: #283457; padding: 1px 6px; border-radius: 3px; font-size: 12px;">/help</span>
+              <span style="color: #565f89; font-size: 12px;">/history  /model ...</span>
+            </div>
+            <span style="color: #ff9e64;">❯</span> <span style="color: #c0caf5;">_|</span>
+          </div>
+        </div>
+      </div>
+      <p style="margin-top: 8px; color: #a0a0a0;">无固定分区，状态栏和补全浮动显示，最大化聊天空间</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 24px;">
+  <h3>推荐</h3>
+  <p>方案 <strong>A（经典上下分栏）</strong> — 结构清晰、窄终端兼容好、实现最直接。右侧面板在终端宽度有限时浪费空间，浮动层交互复杂度高。</p>
+</div>

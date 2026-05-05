@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"log/slog"
-	"os"
 	"sync"
 )
 
@@ -59,30 +58,26 @@ func (lb *LogBuffer) Last(n int) []LogLine {
 }
 
 func (lb *LogBuffer) SlogHandler() slog.Handler {
-	return &logBufferHandler{
-		buf:   lb,
-		inner: slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}),
-	}
+	return &logBufferHandler{buf: lb}
 }
 
 type logBufferHandler struct {
-	buf   *LogBuffer
-	inner slog.Handler
+	buf *LogBuffer
 }
 
 func (h *logBufferHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.inner.Enabled(ctx, level)
+	return true
 }
 
 func (h *logBufferHandler) Handle(ctx context.Context, rec slog.Record) error {
 	h.buf.AppendLevel(rec.Level.String(), rec.Message)
-	return h.inner.Handle(ctx, rec)
+	return nil
 }
 
 func (h *logBufferHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &logBufferHandler{buf: h.buf, inner: h.inner.WithAttrs(attrs)}
+	return h
 }
 
 func (h *logBufferHandler) WithGroup(name string) slog.Handler {
-	return &logBufferHandler{buf: h.buf, inner: h.inner.WithGroup(name)}
+	return h
 }

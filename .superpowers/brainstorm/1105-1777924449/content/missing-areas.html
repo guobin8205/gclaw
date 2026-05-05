@@ -1,0 +1,134 @@
+<h2>TUI 设计 — 遗漏项检查</h2>
+<p class="subtitle">覆盖完整交互场景</p>
+
+<div class="section">
+  <h3>需要确认的功能点</h3>
+  <p style="color: #a0a0a0;">以下是从系统完整性角度梳理出的待补充项，逐个确认</p>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="streaming" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content">
+      <h3>流式输出 & 思考过程</h3>
+      <p>Agent 回复流式渲染，DeepSeek 的 ReasoningContent（思考过程）折叠展示，实时 spinner</p>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 12px; padding: 8px; line-height: 1.6;">
+          <div style="margin-bottom: 6px;">
+            <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #c0caf5;">解释一下这个函数</span>
+          </div>
+          <div style="margin-left: 16px;">
+            <!-- Thinking (collapsed) -->
+            <div style="color: #565f89; margin-bottom: 4px; cursor: pointer;">
+              <span style="color: #bb9af7;">▸ 💭 思考过程</span> <span style="color: #3b3d57;">(2.1s · 点击展开)</span>
+            </div>
+            <!-- Streaming response -->
+            <div style="color: #c0caf5;">这个函数的主要作用是解析配置文件<span style="color: #e0af68;">▌</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="approval" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content">
+      <h3>工具审批弹窗</h3>
+      <p>Bash/Write 等需要确认的工具，在输入区弹出审批面板，而非打断到 stdin</p>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 12px; padding: 8px; line-height: 1.6;">
+          <div style="background: #24283b; border: 1px solid #e0af68; border-radius: 4px; padding: 8px;">
+            <div style="color: #e0af68; margin-bottom: 4px;">⚠ Approval Required</div>
+            <div style="color: #c0caf5; margin-bottom: 2px;"><span style="color: #ff9e64;">$</span> rm -rf /tmp/test-output</div>
+            <div style="display: flex; gap: 8px; margin-top: 6px; font-size: 11px;">
+              <span style="background: #9ece6a; color: #1a1b26; padding: 2px 8px; border-radius: 3px; font-weight: bold;">Y 允许</span>
+              <span style="background: #f7768e; color: #1a1b26; padding: 2px 8px; border-radius: 3px;">N 拒绝</span>
+              <span style="background: #3b3d57; color: #c0caf5; padding: 2px 8px; border-radius: 3px;">A 总是允许</span>
+              <span style="color: #565f89; padding: 2px 8px;">Esc 取消</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="markdown" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content">
+      <h3>Markdown 渲染</h3>
+      <p>助手回复中的代码块语法高亮、表格、粗体/斜体等格式化展示</p>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 12px; padding: 8px; line-height: 1.6;">
+          <div style="margin-left: 16px;">
+            <div style="color: #c0caf5;">主要改动如下：</div>
+            <div style="background: #24283b; border-radius: 3px; padding: 4px 8px; margin: 4px 0;">
+              <div style="color: #565f89; font-size: 11px;">go</div>
+              <div><span style="color: #bb9af7;">func</span> <span style="color: #9ece6a;">main</span><span style="color: #c0caf5;">() {</span></div>
+              <div><span style="color: #c0caf5;">    fmt.</span><span style="color: #9ece6a;">Println</span><span style="color: #c0caf5;">(</span><span style="color: #9ece6a;">"Hello"</span><span style="color: #c0caf5;">)</span></div>
+              <div><span style="color: #c0caf5;">}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="events" onclick="toggleSelect(this)">
+    <div class="letter">4</div>
+    <div class="content">
+      <h3>异步事件通知</h3>
+      <p>微信消息、cron 任务结果、中断事件等在对话区实时显示（不阻塞输入）</p>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 12px; padding: 8px; line-height: 1.6;">
+          <div style="color: #3b3d57; border-top: 1px dashed #3b3d57; border-bottom: 1px dashed #3b3d57; padding: 4px 0; margin: 4px 0;">
+            <span style="color: #7aa2f7;">📬 weixin</span> <span style="color: #565f89;">张三:</span> <span style="color: #c0caf5;">今天的报告写完了吗？</span>
+          </div>
+          <div style="color: #3b3d57; border-top: 1px dashed #3b3d57; border-bottom: 1px dashed #3b3d57; padding: 4px 0; margin: 4px 0;">
+            <span style="color: #e0af68;">⏰ cron</span> <span style="color: #565f89;">test-noagent completed</span> <span style="color: #9ece6a;">✓</span>
+          </div>
+          <div style="color: #3b3d57; border-top: 1px dashed #3b3d57; border-bottom: 1px dashed #3b3d57; padding: 4px 0; margin: 4px 0;">
+            <span style="color: #bb9af7;">💾 checkpoint</span> <span style="color: #565f89;">snapshot saved before WriteFile</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="scroll" onclick="toggleSelect(this)">
+    <div class="letter">5</div>
+    <div class="content">
+      <h3>虚拟滚动 & 大量输出</h3>
+      <p>长对话虚拟滚动，只渲染可见行；工具输出默认折叠，点击展开；底部自动跟随</p>
+      <div class="mockup" style="margin-top: 8px;">
+        <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: monospace; font-size: 12px; padding: 8px; line-height: 1.6;">
+          <div style="color: #565f89; cursor: pointer;">
+            <span style="color: #9ece6a;">⚙ bash</span> go test ./... <span style="color: #9ece6a;">✓</span>
+            <span style="color: #3b3d57; margin-left: 8px;">▸ 输出 (47行) · 点击展开</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="theme" onclick="toggleSelect(this)">
+    <div class="letter">6</div>
+    <div class="content">
+      <h3>主题 & 配色</h3>
+      <p>支持明暗主题切换，或直接用终端默认配色；状态栏颜色反映 agent 状态</p>
+      <div style="display: flex; gap: 12px; margin-top: 8px;">
+        <div style="background: #1a1b26; padding: 8px; border-radius: 4px; border: 1px solid #3b3d57;">
+          <div style="color: #7aa2f7; font-size: 11px; margin-bottom: 4px;">Tokyo Night</div>
+          <div style="font-size: 11px;"><span style="color: #9ece6a;">●</span> <span style="color: #c0caf5;">text</span> <span style="color: #bb9af7;">accent</span></div>
+        </div>
+        <div style="background: #fafafa; color: #333; padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+          <div style="color: #0066cc; font-size: 11px; margin-bottom: 4px;">Light</div>
+          <div style="font-size: 11px;"><span style="color: #008800;">●</span> text <span style="color: #0066cc;">accent</span></div>
+        </div>
+        <div style="background: #0c0c0c; padding: 8px; border-radius: 4px; border: 1px solid #333;">
+          <div style="color: #cccccc; font-size: 11px; margin-bottom: 4px;">Terminal Default</div>
+          <div style="font-size: 11px;"><span style="color: #00ff00;">●</span> <span style="color: #ffffff;">text</span> <span style="color: #00aaff;">accent</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

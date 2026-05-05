@@ -1,0 +1,152 @@
+<h2>Hermes 风格布局 — gclaw TUI 设计</h2>
+<p class="subtitle">基于 Bubble Tea 实现的完整 TUI 重写方案</p>
+
+<div class="mockup" style="margin-bottom: 24px;">
+  <div class="mockup-header">Preview: gclaw TUI 全局布局</div>
+  <div class="mockup-body" style="background: #1a1b26; color: #a9b1d6; font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; font-size: 13px; padding: 0; line-height: 1.5; overflow: hidden;">
+    <!-- Transcript Area (grows to fill) -->
+    <div style="min-height: 280px; padding: 8px 12px; overflow-y: auto; position: relative;">
+      <!-- Banner -->
+      <div style="color: #7aa2f7; margin-bottom: 12px;">
+        <span style="font-weight: bold;">gclaw</span> <span style="color: #565f89;">v0.12.0</span> — <span style="color: #9ece6a;">deepseek-v4-flash</span> | interactive | <span style="color: #565f89;">type /help</span>
+      </div>
+
+      <!-- User message -->
+      <div style="margin-bottom: 8px;">
+        <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #c0caf5;">你好</span>
+      </div>
+
+      <!-- Assistant message -->
+      <div style="margin-bottom: 12px; margin-left: 16px;">
+        <span style="color: #c0caf5;">你好！有什么我可以帮你的吗？</span>
+      </div>
+
+      <!-- User message -->
+      <div style="margin-bottom: 8px;">
+        <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #c0caf5;">帮我写一个 hello world</span>
+      </div>
+
+      <!-- Assistant streaming -->
+      <div style="margin-bottom: 12px; margin-left: 16px;">
+        <div style="color: #565f89; margin-bottom: 4px;">
+          <span style="color: #bb9af7;">⚙ WriteFile</span> main.go
+        </div>
+        <div style="color: #c0caf5;">好的，我来帮你写一个 Go 的 hello world...</div>
+        <div style="color: #c0caf5; margin-top: 4px;">```go</div>
+        <div style="color: #c0caf5;">package main</div>
+        <div style="color: #c0caf5;">import "fmt"</div>
+        <div style="color: #c0caf5;">func main() {</div>
+        <div style="color: #c0caf5;">    fmt.Println("Hello, World!")</div>
+        <div style="color: #c0caf5;">}</div>
+        <div style="color: #c0caf5;">```</div>
+      </div>
+
+      <!-- /status command result -->
+      <div style="margin-bottom: 8px;">
+        <span style="color: #9ece6a; font-weight: bold;">❯ </span><span style="color: #bb9af7;">/status</span>
+      </div>
+      <div style="margin-bottom: 12px; margin-left: 16px; color: #565f89;">
+        <div>Model: <span style="color: #9ece6a;">deepseek-v4-flash</span></div>
+        <div>Cron: <span style="color: #9ece6a;">1 job</span> (test-noagent)</div>
+        <div>Checkpoint: <span style="color: #9ece6a;">enabled</span></div>
+        <div>Browser: <span style="color: #f7768e;">off</span></div>
+        <div>WeChat: <span style="color: #f7768e;">off</span></div>
+      </div>
+
+      <!-- Scrollbar track (right edge) -->
+      <div style="position: absolute; right: 2px; top: 8px; bottom: 8px; width: 1px; background: #3b3d57;"></div>
+      <div style="position: absolute; right: 2px; top: 60px; height: 40px; width: 1px; background: #7aa2f7;"></div>
+    </div>
+
+    <!-- Divider -->
+    <div style="border-top: 1px solid #3b3d57;"></div>
+
+    <!-- Composer Zone -->
+    <div style="padding: 6px 12px; background: #16161e;">
+      <!-- Status rule bar -->
+      <div style="display: flex; justify-content: space-between; font-size: 11px; color: #565f89; margin-bottom: 4px;">
+        <span><span style="color: #9ece6a;">●</span> deepseek-v4-flash</span>
+        <span>ctx: 1.2k/200k</span>
+        <span>cron: active</span>
+        <span>5:36:20</span>
+      </div>
+
+      <!-- Completion dropdown (floating above input) -->
+      <div style="background: #24283b; border: 1px solid #3b3d57; border-radius: 4px; margin-bottom: 4px; padding: 4px 8px;">
+        <div style="background: #283457; padding: 2px 6px; border-radius: 2px;">
+          <span style="color: #bb9af7;">/help</span> <span style="color: #565f89;">— Show available commands</span>
+        </div>
+        <div style="padding: 2px 6px;">
+          <span style="color: #c0caf5;">/history</span> <span style="color: #565f89;">— View command history</span>
+        </div>
+        <div style="padding: 2px 6px;">
+          <span style="color: #c0caf5;">/model</span> <span style="color: #565f89;">— Switch model</span>
+        </div>
+        <div style="padding: 2px 6px;">
+          <span style="color: #c0caf5;">/status</span> <span style="color: #565f89;">— Show system status</span>
+        </div>
+        <div style="padding: 2px 6px; color: #565f89;">...</div>
+      </div>
+
+      <!-- Input line -->
+      <div style="display: flex; align-items: center;">
+        <span style="color: #ff9e64; font-weight: bold; margin-right: 6px;">❯</span>
+        <span style="color: #bb9af7;">/</span><span style="color: #c0caf5;">_|</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>布局结构（从上到下）</h3>
+  <div style="font-family: monospace; font-size: 13px; line-height: 1.8; color: #a0a0a0;">
+    <div>┌─ <span style="color: #7aa2f7;">Transcript（对话区，flex-grow）</span></div>
+    <div>│  ├─ Banner（版本 + 模型 + 模式）</div>
+    <div>│  ├─ 消息列表（可滚动，虚拟滚动）</div>
+    <div>│  │  ├─ User messages（❯ 前缀）</div>
+    <div>│  │  ├─ Assistant messages（缩进）</div>
+    <div>│  │  └─ Tool calls（⚙ 图标 + 文件名）</div>
+    <div>│  └─ Scrollbar（右侧 1 列宽）</div>
+    <div>├─ <span style="color: #9ece6a;">Divider（分隔线）</span></div>
+    <div>├─ <span style="color: #ff9e64;">Composer（输入区，flex-shrink=0）</span></div>
+    <div>│  ├─ Status Rule（模型 + 上下文 + 时间）</div>
+    <div>│  ├─ Queue Preview（排队消息预览）</div>
+    <div>│  ├─ Completions Dropdown（浮动补全）</div>
+    <div>│  └─ Input Line（❯ 提示符 + 文本输入）</div>
+    <div>└─</div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 16px;">
+  <h3>交互功能清单</h3>
+  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #7aa2f7;">Tab 补全</td>
+      <td style="padding: 6px;">/ 触发斜杠命令补全，Tab 应用，↑↓ 切换</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #7aa2f7;">历史记录</td>
+      <td style="padding: 6px;">↑↓ 浏览历史，持久化到 ~/.gclaw/history</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #7aa2f7;">多行输入</td>
+      <td style="padding: 6px;">\ + Enter 换行，Enter 发送，显示多行缓冲区</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #7aa2f7;">消息队列</td>
+      <td style="padding: 6px;">Agent 忙碌时排队，预览队列内容，可编辑</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #7aa2f7;">/logs [N]</td>
+      <td style="padding: 6px;">在对话区显示最近 N 行日志（hermes 方式）</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #333;">
+      <td style="padding: 6px; color: #7aa2f7;">Ctrl+C</td>
+      <td style="padding: 6px;">中断当前 agent 运行，Esc 取消当前输入</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px; color: #7aa2f7;">/interrupt</td>
+      <td style="padding: 6px;">注入中断消息到运行中的 agent</td>
+    </tr>
+  </table>
+</div>
