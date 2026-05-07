@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +14,15 @@ import (
 	"github.com/openclaw/gclaw/internal/agent"
 	"github.com/openclaw/gclaw/internal/config"
 )
+
+var dbgLog *log.Logger
+
+func init() {
+	f, err := os.OpenFile(filepath.Join(os.TempDir(), "gclaw-composer-debug.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		dbgLog = log.New(f, "", log.Lmicroseconds)
+	}
+}
 
 type Deps struct {
 	Config       *config.Config
@@ -47,8 +59,9 @@ type App struct {
 	// Queue
 	queue []string
 	// Attachment input mode
-	attaching    bool
-	attachInput  []rune
+	attaching   bool
+	attachInput []rune
+	cancelFn    context.CancelFunc
 }
 
 func (a *App) SetSend(send func(msg tea.Msg)) {
@@ -147,13 +160,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyPressMsg:
-		return a.handleKey(m)
+		prevText := a.composer.Text()
+		m2, cmd := a.handleKey(m)
+		if a.composer.Text() != prevText {
+			w, h := a.width, a.height
+			return m2, tea.Batch(cmd, func() tea.Msg {
+				return tea.WindowSizeMsg{Width: w, Height: h}
+			})
+		}
+		return m2, cmd
 
 	case tea.PasteMsg:
 		a.composer.SetInput(a.composer.Text() + m.Content)
-		return a, nil
+		w, h := a.width, a.height
+		return a, func() tea.Msg {
+			return tea.WindowSizeMsg{Width: w, Height: h}
+		}
 
 	case agentResponseMsg:
+		a.cancelFn = nil
 		a.busy = false
 		a.statusbar.SetState("ready")
 		if m.err != nil {
@@ -272,19 +297,72 @@ func (a *App) View() tea.View {
 	}
 	compView := a.renderCompletions()
 	queueView := a.renderQueue()
-	parts := []string{transcriptView, divider, statusView}
+	parts := []string{transcriptView, divider}
 	if queueView != "" {
 		parts = append(parts, queueView)
 	}
 	if compView != "" {
 		parts = append(parts, compView)
 	}
-	parts = append(parts, composerView)
+	parts = append(parts, composerView, divider, statusView)
+	if a.approval == nil {
+		parts = append(parts, a.renderHints())
+	}
 	if a.quitConfirm {
 		hint := a.styles.Warning.Render("  再按 Ctrl+C 退出")
 		parts = append(parts, hint)
 	}
-	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, parts...))
+	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	if dbgLog != nil {
+		dbgLog.Printf("VIEW: width=%d height=%d joinedLen=%d", a.width, a.height, len(joined))
+	}
+	v := tea.NewView(joined)
+	v.AltScreen = true
+	if a.approval == nil {
+		cursorX, cursorY := a.computeCursorPos(transcriptView, queueView, compView)
+		if dbgLog != nil {
+			dbgLog.Printf("CURSOR: x=%d y=%d", cursorX, cursorY)
+		}
+		v.Cursor = tea.NewCursor(cursorX, cursorY)
+		v.Cursor.Blink = true
+	}
+	return v
+}
+
+func (a *App) computeCursorPos(transcriptView, queueView, compView string) (int, int) {
+	transLines := strings.Count(transcriptView, "\n") + 1
+	if transcriptView == "" {
+		transLines = 0
+	}
+	compStartLine := transLines + 1 // divider line
+	if queueView != "" {
+		compStartLine += strings.Count(queueView, "\n") + 1
+	}
+	if compView != "" {
+		compStartLine += strings.Count(compView, "\n") + 1
+	}
+	curRow, curCol := a.composer.CursorPos()
+	compText := a.composer.Text()
+	if compText == "" {
+		cursorX := lipgloss.Width(a.styles.Prompt.Render("❯ "))
+		return cursorX, compStartLine
+	}
+	clines := strings.Split(compText, "\n")
+	if curRow < len(clines) {
+		prefix := "  "
+		if curRow == 0 {
+			prefix = a.styles.Prompt.Render("❯ ")
+		}
+		prefixW := lipgloss.Width(prefix)
+		runes := []rune(clines[curRow])
+		if curCol > len(runes) {
+			curCol = len(runes)
+		}
+		textBefore := string(runes[:curCol])
+		cursorX := prefixW + lipgloss.Width(textBefore)
+		return cursorX, compStartLine + curRow
+	}
+	return 0, compStartLine
 }
 
 func (a *App) handleAttachKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -323,6 +401,11 @@ func (a *App) handleAttachKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if dbgLog != nil {
+		cr, cc := a.composer.CursorPos()
+		dbgLog.Printf("KEY: code=%d mod=%d text=%q composer=%q curRow=%d curCol=%d",
+			msg.Code, msg.Mod, msg.Text, a.composer.Text(), cr, cc)
+	}
 	if a.approval != nil {
 		result := a.approval.HandleKey(msg.String())
 		if result != ApprovalPending {
@@ -334,10 +417,16 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	code := msg.Code
 	mod := msg.Mod
 
+
 	if code == 'c' && mod == tea.ModCtrl {
 		if a.busy {
 			if a.deps.Agent != nil {
-				a.deps.Agent.Interrupt("user interrupt")
+				if a.cancelFn != nil {
+					a.deps.Agent.InterruptAndStop("user interrupt", a.cancelFn)
+					a.cancelFn = nil
+				} else {
+					a.deps.Agent.Interrupt("user interrupt")
+				}
 			}
 			a.busy = false
 			a.statusbar.SetState("ready")
@@ -355,13 +444,12 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, quitConfirmTimeout()
 	}
 	a.quitConfirm = false
-
-	if code == 'l' && mod == tea.ModCtrl {
-		a.transcript = NewTranscript(a.styles, a.theme)
-		a.transcript.Resize(a.width, a.height-6)
+	if code == tea.KeyEnter && mod == tea.ModCtrl {
+		a.composer.InsertNewLine()
 		return a, nil
 	}
-	if code == tea.KeyEnter && mod == tea.ModCtrl {
+	// Ctrl+J (non-Kitty Ctrl+Enter fallback)
+	if code == 'j' && mod == tea.ModCtrl {
 		a.composer.InsertNewLine()
 		return a, nil
 	}
@@ -432,6 +520,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		if !a.composer.AtFirstLineStart() {
+			a.composer.MoveUp()
+			return a, nil
+		}
 		if a.deps.History != nil {
 			if entry := a.deps.History.Older(); entry != "" {
 				a.composer.SetInput(entry)
@@ -444,6 +536,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if a.compIdx >= len(a.compItems) {
 				a.compIdx = 0
 			}
+			return a, nil
+		}
+		if !a.composer.AtLastLineEnd() {
+			a.composer.MoveDown()
 			return a, nil
 		}
 		if a.deps.History != nil {
@@ -495,25 +591,37 @@ func (a *App) submitInput() (tea.Model, tea.Cmd) {
 			images = append(images, att.Path)
 		}
 	}
-	a.composer.Clear()
-	a.busy = true
-	a.statusbar.SetState("busy")
-	return a, runAgentCmd(a.deps, text, images)
-}
+		a.composer.Clear()
+		a.busy = true
+		a.statusbar.SetState("busy")
+		ctx, cancel := context.WithCancel(context.Background())
+		a.cancelFn = cancel
+		return a, runAgentCmd(a.deps, ctx, text, images)
+	}
 
 func (a *App) renderCompletions() string {
 	if !a.compActive || len(a.compItems) == 0 {
 		return ""
 	}
-	maxVisible := 8
 	items := a.compItems
-	if len(items) > maxVisible {
-		items = items[:maxVisible]
+	maxVisible := 8
+	start := a.compIdx - maxVisible/2
+	if start < 0 {
+		start = 0
 	}
+	if len(items) > maxVisible && start > len(items)-maxVisible {
+		start = len(items) - maxVisible
+	}
+	end := start + maxVisible
+	if end > len(items) {
+		end = len(items)
+	}
+	visible := items[start:end]
 	var lines []string
-	for i, item := range items {
+	for i, item := range visible {
+		realIdx := start + i
 		line := item.Display + " " + a.styles.Muted.Render("— "+item.Description)
-		if i == a.compIdx {
+		if realIdx == a.compIdx {
 			line = a.styles.CompActive.Render(line)
 		} else {
 			line = a.styles.Completion.Render(line)
@@ -564,13 +672,14 @@ func (a *App) renderComposer() string {
 		}
 		parts = append(parts, a.styles.EventPrefix.Render(icon+" "+att.Path)+" "+a.styles.Error.Render("✕"))
 	}
-	// Attachment input mode
-	if a.attaching {
-		parts = append(parts, a.styles.Accent.Render("📎 文件路径: ")+string(a.attachInput))
-	} else {
-		parts = append(parts, a.styles.Muted.Render("Ctrl+Enter:换行 Enter:发送 Ctrl+I:附加文件 Esc:取消"))
-	}
 	return strings.Join(parts, "\n")
+}
+
+func (a *App) renderHints() string {
+	if a.attaching {
+		return a.styles.Accent.Render("📎 文件路径: ") + string(a.attachInput)
+	}
+	return a.styles.Muted.Render("Ctrl+Enter:换行 Enter:发送 Ctrl+I:附加文件 Esc:取消")
 }
 
 type agentResponseMsg struct {
@@ -611,11 +720,11 @@ func quitConfirmTimeout() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return quitConfirmTimeoutMsg(t) })
 }
 
-func runAgentCmd(deps Deps, input string, images []string) tea.Cmd {
+func runAgentCmd(deps Deps, ctx context.Context, input string, images []string) tea.Cmd {
 	return func() tea.Msg {
 		if deps.OnSubmit != nil {
 			if deps.Agent != nil && deps.Send != nil {
-				text, err := deps.Agent.RunStreaming(context.Background(), input, func(chunk string) {
+				text, err := deps.Agent.RunStreaming(ctx, input, func(chunk string) {
 					deps.Send(streamChunkMsg{text: chunk})
 				})
 				if err != nil {
@@ -623,7 +732,7 @@ func runAgentCmd(deps Deps, input string, images []string) tea.Cmd {
 				}
 				return agentResponseMsg{text: text}
 			}
-			text, err := deps.OnSubmit(context.Background(), input, images)
+			text, err := deps.OnSubmit(ctx, input, images)
 			return agentResponseMsg{text: text, err: err}
 		}
 		return agentResponseMsg{}

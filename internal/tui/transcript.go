@@ -70,6 +70,34 @@ func (tr *Transcript) ToggleCursor() {
 	tr.cursorVisible = !tr.cursorVisible
 }
 
+func (tr *Transcript) ToggleFold() {
+	for i := len(tr.msgs) - 1; i >= 0; i-- {
+		msg := &tr.msgs[i]
+		if msg.Kind == MsgAssistant && msg.Thinking != "" {
+			msg.ThinkingOpen = !msg.ThinkingOpen
+			return
+		}
+		if msg.Kind == MsgToolCall && msg.Tool != nil {
+			if tc := tr.findLastCollapsed(msg.Tool); tc != nil {
+				tc.Collapsed = !tc.Collapsed
+				return
+			}
+		}
+	}
+}
+
+func (tr *Transcript) findLastCollapsed(tc *ToolCall) *ToolCall {
+	for i := len(tc.Children) - 1; i >= 0; i-- {
+		if found := tr.findLastCollapsed(&tc.Children[i]); found != nil {
+			return found
+		}
+	}
+	if tc.Output != "" {
+		return tc
+	}
+	return nil
+}
+
 func (tr *Transcript) Messages() []TranscriptMsg { return tr.msgs }
 func (tr *Transcript) SetBanner(banner string)    { tr.banner = banner }
 
@@ -116,7 +144,7 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 	var lines []string
 	switch msg.Kind {
 	case MsgUser:
-		lines = append(lines, tr.styles.UserPrefix.Render("❯ ")+tr.styles.UserText.Render(msg.Content))
+		lines = append(lines, tr.styles.UserPrefix.Render("> ")+tr.styles.UserText.Render(msg.Content))
 		for _, img := range msg.Images {
 			lines = append(lines, tr.styles.EventPrefix.Render("🖼 "+img))
 		}

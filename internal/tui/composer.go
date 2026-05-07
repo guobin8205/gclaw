@@ -52,8 +52,8 @@ func (c *Composer) InsertRune(r rune) {
 
 func (c *Composer) InsertNewLine() {
 	line := c.lines[c.curRow]
-	before := line[:c.curCol]
-	after := line[c.curCol:]
+	before := append([]rune{}, line[:c.curCol]...)
+	after := append([]rune{}, line[c.curCol:]...)
 	c.lines[c.curRow] = before
 	c.lines = append(c.lines, nil)
 	copy(c.lines[c.curRow+2:], c.lines[c.curRow+1:])
@@ -113,6 +113,41 @@ func (c *Composer) MoveRight() {
 
 func (c *Composer) MoveHome() { c.curCol = 0 }
 func (c *Composer) MoveEnd()  { c.curCol = len(c.lines[c.curRow]) }
+
+func (c *Composer) MoveUp() bool {
+	if c.curRow == 0 {
+		return false
+	}
+	c.curRow--
+	lineLen := len(c.lines[c.curRow])
+	if c.curCol > lineLen {
+		c.curCol = lineLen
+	}
+	return true
+}
+
+func (c *Composer) MoveDown() bool {
+	if c.curRow >= len(c.lines)-1 {
+		return false
+	}
+	c.curRow++
+	lineLen := len(c.lines[c.curRow])
+	if c.curCol > lineLen {
+		c.curCol = lineLen
+	}
+	return true
+}
+
+func (c *Composer) AtFirstLineStart() bool {
+	return c.curRow == 0 && c.curCol == 0
+}
+
+func (c *Composer) AtLastLineEnd() bool {
+	return c.curRow == len(c.lines)-1 && c.curCol == len(c.lines[c.curRow])
+}
+
+// CursorPos returns the current cursor row and column.
+func (c *Composer) CursorPos() (row, col int) { return c.curRow, c.curCol }
 
 func (c *Composer) AddAttachment(path string, isImage bool) {
 	c.attachments = append(c.attachments, Attachment{Path: path, IsImage: isImage})

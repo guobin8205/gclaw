@@ -67,6 +67,12 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (too
 		backendName = v
 	}
 
+	if SearchFactory == nil {
+		return tool.ToolResult{
+			Content: "Error: web search is not configured",
+			IsError: true,
+		}, nil
+	}
 	results, err := SearchFactory.Search(ctx, query, opts, backendName)
 	if err != nil {
 		return tool.ToolResult{

@@ -566,7 +566,7 @@ func runREPL() {
 	theme := tui.LoadTheme(cfg.TUI.Theme)
 	logBuf := earlyLogBuf
 	hist := tui.NewHistory(config.ExpandPath("~/.gclaw/history"), cfg.TUI.History.MaxEntries)
-	compEng := tui.NewCompletionEngine(nil)
+	compEng := tui.DefaultCompletionEngine()
 
 	clarifypkg.Callback = func(question string, options []clarifypkg.Option) (string, error) {
 		return "", fmt.Errorf("clarify not yet supported in TUI mode")

@@ -61,6 +61,8 @@ func (h *History) Older() string {
 		h.idx = n - 1
 	} else if h.idx > 0 {
 		h.idx--
+	} else {
+		return ""
 	}
 	return h.entries[h.idx]
 }
