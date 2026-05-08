@@ -62,7 +62,9 @@ AltScreen mode with `WindowSizeMsg`-based full redraw on text change to work aro
 
 **Streaming:** `runAgentCmd` uses `Agent.RunStreaming` with `tea.Program.Send` callback to push `streamChunkMsg` for real-time text display with blinking cursor `▌`. `SetSend()` is called after `tea.NewProgram` creation to wire the callback. A cancellable `context.Context` is created in `submitInput` and stored in `App.cancelFn` for interrupt support.
 
-**Themes:** `tokyo-night` (default), `catppuccin-mocha`, `light`, `terminal`. Configurable via `tui.theme` in config.yaml.
+**Themes:** `tokyo-night` (default), `catppuccin-mocha`, `light`, `terminal`. Configurable via `tui.theme` in config.yaml or `/theme <name>` at runtime. Semantic color layering: Accent (focus/interactive) → Foreground (reading) → Muted/Border (structure) → Green/Orange/Yellow/Red/Purple (status). Tokyo Night uses cold neon cyan accent; Catppuccin Mocha uses warm soft mauve accent.
+
+**Uniform Background Rendering:** lipgloss v2 uses `\x1b[m]` (not `\x1b[0m]`) for SGR reset, which clears the outer background style. To ensure uniform theme background across the entire terminal, `applyUniformBG()` in `app.go` post-processes the final output: (1) injects theme bg ANSI code at the start of each line, (2) re-applies bg after every `\x1b[m]` reset, (3) pads each line to full width with bg-colored spaces, (4) appends empty bg-filled lines to fill terminal height. All `fg()`-based styles also include `Background(th.BG)` as an extra safety layer.
 
 **Key bindings:** Enter=send, Ctrl+Enter/Ctrl+J=newline, Esc=clear/close completions/clear selection, Ctrl+C=interrupt (cancelFn + InterruptAndStop)/quit, Ctrl+L=clear transcript, ↑↓=move cursor within composer, history only at boundaries, PgUp/PgDn=scroll, Tab=apply completion, Ctrl+I=attach file, Ctrl+V=paste, Ctrl+O=toggle thinking/tool fold, mouse wheel=scroll, mouse drag=select text, right-click=copy selection to clipboard.
 

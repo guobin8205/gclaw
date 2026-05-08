@@ -706,3 +706,44 @@ func TestSimChineseInput(t *testing.T) {
 		t.Errorf("history: got %q", s.app.composer.Text())
 	}
 }
+
+// ============================================================
+// Test 22: Theme switch triggers OnThemeChange callback
+// ============================================================
+
+func TestSimThemeSwitchCallback(t *testing.T) {
+	var themeChanged string
+	th := LoadTheme("tokyo-night")
+	app := NewApp(Deps{
+		Theme:  th,
+		LogBuf: NewLogBuffer(200),
+		OnThemeChange: func(name string) {
+			themeChanged = name
+		},
+	})
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	// Type and submit /theme catppuccin-mocha
+	for _, r := range "/theme catppuccin-mocha" {
+		app.Update(tea.KeyPressMsg{Text: string(r)})
+	}
+	app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if themeChanged != "catppuccin-mocha" {
+		t.Fatalf("OnThemeChange not called or wrong value: got %q", themeChanged)
+	}
+	if app.theme.Name != "catppuccin-mocha" {
+		t.Fatalf("theme not switched: got %q", app.theme.Name)
+	}
+
+	// Unknown theme should NOT trigger callback
+	themeChanged = ""
+	for _, r := range "/theme nonexistent" {
+		app.Update(tea.KeyPressMsg{Text: string(r)})
+	}
+	app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if themeChanged != "" {
+		t.Fatalf("OnThemeChange should not be called for unknown theme, got %q", themeChanged)
+	}
+}

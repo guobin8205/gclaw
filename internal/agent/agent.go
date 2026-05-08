@@ -112,6 +112,17 @@ func (a *Agent) Usage() model.Usage {
 	return a.totalUsage
 }
 
+// ContextUsage returns current context window size and max tokens.
+func (a *Agent) ContextUsage() (used, max int) {
+	max = a.MaxTokens()
+	a.mu.Lock()
+	if a.ctxMgr != nil {
+		used = a.ctxMgr.TokenCount()
+	}
+	a.mu.Unlock()
+	return
+}
+
 // Run executes the agent loop with the given user prompt.
 // It returns the final text response and any error.
 func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
@@ -155,6 +166,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 
 		a.totalUsage.InputTokens += response.Usage.InputTokens
 		a.totalUsage.OutputTokens += response.Usage.OutputTokens
+		if a.ctxMgr != nil && response.Usage.InputTokens > 0 {
+			a.ctxMgr.SetActualTokens(response.Usage.InputTokens)
+		}
 
 		// Append assistant response
 		a.messages = append(a.messages, model.Message{
@@ -251,6 +265,9 @@ func (a *Agent) RunStreaming(ctx context.Context, prompt string, onText func(tex
 				if event.Usage != nil {
 					a.totalUsage.InputTokens += event.Usage.InputTokens
 					a.totalUsage.OutputTokens += event.Usage.OutputTokens
+					if a.ctxMgr != nil && event.Usage.InputTokens > 0 {
+						a.ctxMgr.SetActualTokens(event.Usage.InputTokens)
+					}
 				}
 				break streamLoop
 			case model.StreamEventError:
@@ -328,9 +345,16 @@ func (a *Agent) executeTool(ctx context.Context, tu model.ToolUse) error {
 
 	slog.Info("tool result", "tool", tu.Name, "result_len", len(result.Content), "preview", truncate(result.Content, 150))
 
+	// Truncate large tool outputs to prevent context explosion
+	content := result.Content
+	const maxToolOutput = 50000 // ~12-15K tokens
+	if len(content) > maxToolOutput {
+		content = content[:maxToolOutput] + fmt.Sprintf("\n... [truncated %d bytes]", len(result.Content)-maxToolOutput)
+	}
+
 	a.messages = append(a.messages, model.Message{
 		Role:    "tool",
-		Content: result.Content,
+		Content: content,
 		ToolID:  tu.ID,
 	})
 

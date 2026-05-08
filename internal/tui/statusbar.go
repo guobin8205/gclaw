@@ -37,13 +37,16 @@ func (sb *StatusBar) SetTheme(th Theme) { sb.theme = th; sb.styles = th.Styles()
 func (sb *StatusBar) Render(width int) string {
 	var parts []string
 
-	dotColor := sb.theme.Green
-	if sb.state == "busy" {
-		dotColor = sb.theme.Yellow
-	} else if sb.state == "error" {
-		dotColor = sb.theme.Red
+	var dotStyle lipgloss.Style
+	switch {
+	case sb.state == "busy":
+		dotStyle = sb.styles.Warning
+	case sb.state == "error":
+		dotStyle = sb.styles.Error
+	default:
+		dotStyle = sb.styles.ToolName
 	}
-	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render("●")
+	dot := dotStyle.Render("●")
 	modelName := sb.styles.Accent.Render(sb.model)
 	parts = append(parts, dot+" "+modelName)
 

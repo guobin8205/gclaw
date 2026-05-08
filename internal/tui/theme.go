@@ -94,8 +94,15 @@ func LoadTheme(name string) Theme {
 }
 
 func (th Theme) Styles() Styles {
+	// fg creates a style with foreground color and theme background.
+	// Including background prevents lipgloss's reset (\x1b[0m) from
+	// clearing the outer background, which caused striped appearance.
 	fg := func(hex string) lipgloss.Style {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(hex))
+		s := lipgloss.NewStyle().Foreground(lipgloss.Color(hex))
+		if th.BG != "" {
+			s = s.Background(lipgloss.Color(th.BG))
+		}
+		return s
 	}
 	fgbg := func(fgHex, bgHex string) lipgloss.Style {
 		s := lipgloss.NewStyle()
@@ -107,10 +114,27 @@ func (th Theme) Styles() Styles {
 		}
 		return s
 	}
+	// styleFG creates a style with foreground + bold/italic + theme background.
+	styleFG := func(hex string, opts ...func(lipgloss.Style) lipgloss.Style) lipgloss.Style {
+		s := lipgloss.NewStyle()
+		if hex != "" {
+			s = s.Foreground(lipgloss.Color(hex))
+		}
+		if th.BG != "" {
+			s = s.Background(lipgloss.Color(th.BG))
+		}
+		for _, opt := range opts {
+			s = opt(s)
+		}
+		return s
+	}
+	bold := func(s lipgloss.Style) lipgloss.Style { return s.Bold(true) }
+	italic := func(s lipgloss.Style) lipgloss.Style { return s.Italic(true) }
+	ml2 := func(s lipgloss.Style) lipgloss.Style { return s.MarginLeft(2) }
 	return Styles{
 		UserText:    fg(th.Text),
-		UserPrefix:  lipgloss.NewStyle().Foreground(lipgloss.Color(th.Green)).Bold(true),
-		Assistant:   lipgloss.NewStyle().Foreground(lipgloss.Color(th.Text)).MarginLeft(2),
+		UserPrefix:  styleFG(th.Green, bold),
+		Assistant:   styleFG(th.Text, ml2),
 		ToolName:    fg(th.Green),
 		BashPrefix:  fg(th.Orange),
 		Delegate:    fg(th.Purple),
@@ -119,14 +143,14 @@ func (th Theme) Styles() Styles {
 		Muted:       fg(th.Muted),
 		Dim:         fg(th.Dim),
 		Accent:      fg(th.Accent),
-		Banner:      fgbg(th.Accent, th.Dim),
+		Banner:      fg(th.Accent),
 		StatusBar:   fg(th.Muted),
 		Divider:     fg(th.Border),
 		Completion:  fg(th.Text),
 		CompActive:  fgbg(th.Purple, th.Border),
 		Error:       fg(th.Red),
 		Warning:     fg(th.Yellow),
-		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color(th.Orange)).Bold(true),
+		Prompt:      styleFG(th.Orange, bold),
 		Background:  fgbg(th.Text, th.BG),
 		AllowBtn: lipgloss.NewStyle().
 			Background(lipgloss.Color(th.Green)).
@@ -140,11 +164,11 @@ func (th Theme) Styles() Styles {
 			Background(lipgloss.Color(th.Border)).
 			Foreground(lipgloss.Color(th.Text)).
 			Padding(0, 1),
-		Heading1:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Accent)),
-		Heading2:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Text)),
-		Heading:     lipgloss.NewStyle().Bold(true),
-		Bold:        lipgloss.NewStyle().Bold(true),
-		Italic:      lipgloss.NewStyle().Italic(true),
+		Heading1:    styleFG(th.Accent, bold),
+		Heading2:    styleFG(th.Text, bold),
+		Heading:     styleFG("", bold),
+		Bold:        styleFG("", bold),
+		Italic:      styleFG("", italic),
 		Table:       fg(th.Muted),
 		CodeString:  fg(th.Green),
 		CodeComment: fg(th.Dim),

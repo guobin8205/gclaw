@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -290,7 +291,7 @@ func Defaults() Config {
 		},
 		Context: ContextConfig{
 			MaxTokens:    200000,
-			CompactAt:    0.85,
+			CompactAt:    0.50,
 			ReserveRatio: 0.15,
 		},
 		Permission: PermissionConfig{
@@ -534,6 +535,10 @@ func merge(dst *Config, src Config) {
 	if src.Checkpoint.MaxSnapshots != 0 {
 		dst.Checkpoint.MaxSnapshots = src.Checkpoint.MaxSnapshots
 	}
+		// TUI merge
+		if src.TUI.Theme != "" {
+			dst.TUI.Theme = src.TUI.Theme
+		}
 }
 
 var envVarRe = regexp.MustCompile(`\$\{([^}]+)\}`)
@@ -613,6 +618,60 @@ func UserConfigPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".gclaw", "config.yaml"), nil
+}
+
+// SavePreference writes a single config key to the given config file.
+// Key is dot-separated (e.g., "model.default"). Existing settings are preserved.
+func SavePreference(configPath, key string, value any) error {
+	if configPath == "" {
+		p, err := UserConfigPath()
+		if err != nil {
+			return err
+		}
+		configPath = p
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	// Read existing config
+	var data map[string]any
+	if raw, err := os.ReadFile(configPath); err == nil {
+		yaml.Unmarshal(raw, &data)
+	}
+	if data == nil {
+		data = make(map[string]any)
+	}
+
+	// Set nested key
+	parts := strings.Split(key, ".")
+	current := data
+	for _, part := range parts[:len(parts)-1] {
+		if _, ok := current[part]; !ok {
+			current[part] = make(map[string]any)
+		}
+		if m, ok := current[part].(map[string]any); ok {
+			current = m
+		}
+	}
+	current[parts[len(parts)-1]] = value
+
+	// Write back
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		slog.Error("SavePreference: marshal failed", "key", key, "error", err)
+		return err
+	}
+	slog.Info("SavePreference: writing", "path", configPath, "key", key, "value", value, "bytes", len(out))
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		slog.Error("SavePreference: write failed", "path", configPath, "error", err)
+		return err
+	}
+	slog.Info("SavePreference: write OK")
+	return nil
 }
 
 // SanitizedKey masks an API key for display.

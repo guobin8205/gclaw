@@ -231,7 +231,7 @@ func runREPL() {
 		}
 	}
 
-	systemPrompt := defaultSystemPrompt() + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy))
+	systemPrompt := defaultSystemPrompt(cfg.Model.Default) + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy))
 	if skillMgr != nil {
 		systemPrompt += skillMgr.ForSystemPrompt()
 	}
@@ -301,7 +301,7 @@ func runREPL() {
 			weixinAgent := agent.New(agent.Config{
 				Model:        modelProvider,
 				Tools:        toolRegistry,
-				SystemPrompt: defaultSystemPrompt(),
+				SystemPrompt: defaultSystemPrompt(modelProvider.ID()),
 				MaxTurns:     20,
 				Autonomy:     agent.Interactive,
 				Permissions:  permChecker,
@@ -335,7 +335,7 @@ func runREPL() {
 				slog.Warn("cron: model not found, using default", "model", cfg.Cron.Model, "error", err)
 			}
 		}
-		cronSystemPrompt := defaultSystemPrompt()
+		cronSystemPrompt := defaultSystemPrompt(cronModel.ID())
 		if skillMgr != nil {
 			cronSystemPrompt += skillMgr.ForSystemPrompt()
 		}
@@ -415,7 +415,7 @@ func runREPL() {
 			return agent.New(agent.Config{
 				Model:        modelProvider,
 				Tools:        toolRegistry,
-				SystemPrompt: defaultSystemPrompt(),
+				SystemPrompt: defaultSystemPrompt(modelProvider.ID()),
 				MaxTurns:     10,
 				Autonomy:     agent.Interactive,
 				Permissions:  permChecker,
@@ -574,6 +574,7 @@ func runREPL() {
 
 	cmdContext := &cmdCtx{
 		cfg:             cfg,
+		configPath:      projectPath,
 		ctxMgr:          ctxManager,
 		taskMgr:         taskMgr,
 		ag:              ag,
@@ -637,7 +638,17 @@ func runREPL() {
 			if output != "" {
 				app.AppendEvent("cmd", strings.Fields(cmd)[0], output)
 			}
+			if strings.HasPrefix(cmd, "/model ") && strings.Contains(output, "Switched to") {
+				name := strings.TrimSpace(strings.TrimPrefix(cmd, "/model "))
+				app.SetModel(name)
+			}
 		},
+			OnThemeChange: func(name string) {
+				cmdContext.cfg.TUI.Theme = name
+				if err := config.SavePreference(cmdContext.configPath, "tui.theme", name); err != nil {
+					slog.Warn("failed to save theme", "error", err, "path", cmdContext.configPath)
+				}
+			},
 		GetAgentCount: func() int {
 			if scheduler == nil {
 				return 0
@@ -685,6 +696,7 @@ func runREPL() {
 // cmdCtx holds all runtime dependencies needed by slash commands.
 type cmdCtx struct {
 	cfg             *config.Config
+	configPath      string // project config path if exists, else user config path
 	ctxMgr          *context.Manager
 	taskMgr         *task.Manager
 	ag              *agent.Agent
@@ -835,6 +847,7 @@ Exit:
 		}
 		c.ag.SetModel(m)
 		c.cfg.Model.Default = name
+		config.SavePreference(c.configPath, "model.default", name)
 		fmt.Fprintf(w, "Switched to model: %s\n", name)
 	case cmd == "/fallback":
 		fmt.Fprintln(w, "\n--- Fallback Chain ---")
@@ -847,6 +860,7 @@ Exit:
 	case strings.HasPrefix(cmd, "/fallback "):
 		models := strings.Fields(strings.TrimPrefix(cmd, "/fallback "))
 		c.cfg.Model.Fallback = models
+		config.SavePreference(c.configPath, "model.fallback", models)
 		fmt.Fprintf(w, "Fallback chain updated: %v\n", models)
 
 	case cmd == "/tools":
@@ -888,7 +902,11 @@ Exit:
 		}
 		if c.app.SetTheme(name) {
 			c.cfg.TUI.Theme = name
-			fmt.Fprintf(w, "Theme switched to %s\n", name)
+			if err := config.SavePreference(c.configPath, "tui.theme", name); err != nil {
+				fmt.Fprintf(w, "Warning: failed to save theme: %v (path=%q)\n", err, c.configPath)
+			} else {
+				fmt.Fprintf(w, "Theme switched to %s\n", name)
+			}
 		} else {
 			fmt.Fprintf(w, "Failed to switch theme to %s\n", name)
 		}
@@ -1492,7 +1510,7 @@ func setupContext(cfg *config.Config, factory *provider.Factory) *context.Manage
 		MaxTokens:    cfg.Context.MaxTokens,
 		CompactAt:    cfg.Context.CompactAt,
 		ReserveRatio: cfg.Context.ReserveRatio,
-		SystemPrompt: defaultSystemPrompt() + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy)),
+		SystemPrompt: defaultSystemPrompt(cfg.Model.Default) + "\n" + autonomous.SystemPrompt(autonomous.ParseLevel(cfg.Agent.Autonomy)),
 	}
 
 	if cfg.Context.CompressorEnabled && cfg.Context.CompressorModel != "" {
@@ -1535,8 +1553,8 @@ func parseAutonomy(s string) agent.AutonomyLevel {
 	}
 }
 
-func defaultSystemPrompt() string {
-	return `You are gclaw, a helpful and versatile autonomous assistant.
+func defaultSystemPrompt(modelName string) string {
+	return `You are gclaw, a helpful and versatile autonomous assistant powered by ` + modelName + `.
 
 # Tool-use rules
 
@@ -1551,6 +1569,23 @@ NEVER answer these from memory — ALWAYS use a tool:
 When you say you will perform an action (e.g. "let me check", "I will search"), you MUST immediately make the corresponding tool call in the same response. Never end your turn with a promise of future action — execute it now.
 
 If a tool returns empty or partial results, retry with a different query before giving up. Keep working until the task is complete.
+
+# Memory rules
+
+Proactively save important facts using the memory tool. Save when you learn:
+- User preferences, habits, communication style (language, tone, detail level)
+- User corrections ("no, I prefer X", "actually use Y")
+- Environment facts (OS, tools, project structure, conventions)
+- Workflow patterns the user follows regularly
+- Names, roles, timezone, coding style
+
+Do NOT save:
+- Trivial or obvious information
+- Session-specific details (temporary paths, one-off debugging state)
+- Raw data dumps or long code blocks
+- Task progress or completed work logs
+
+When in doubt, save it. Never mention the memory system to the user.
 
 # General rules
 - For pure general knowledge, summaries, translations, or explanations where no tools are needed, answer directly.

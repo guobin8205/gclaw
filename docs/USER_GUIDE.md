@@ -241,12 +241,12 @@ gclaw dev — interactive mode | deepseek-v4-pro | type /help
 
 TUI 支持四种内置主题：
 
-| 主题 | 说明 |
-|------|------|
-| `tokyo-night` | 深色主题（默认） |
-| `catppuccin-mocha` | 暖色深色主题 |
-| `light` | 浅色主题 |
-| `terminal` | 终端原生配色 |
+| 主题 | 风格 | Accent 色 |
+|------|------|-----------|
+| `tokyo-night` | 冷调霓虹赛博风（默认） | 青色 `#2ac3de` |
+| `catppuccin-mocha` | 暖调柔和护眼 | 紫色 `#cba6f7` |
+| `light` | 浅色主题 | 蓝色 `#0066cc` |
+| `terminal` | 终端原生配色 | 终端默认 |
 
 配置方式：
 

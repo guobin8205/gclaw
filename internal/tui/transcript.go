@@ -7,6 +7,20 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// nameStyle picks the style for a tool name based on its type.
+func (tr *Transcript) nameStyle(name string) lipgloss.Style {
+	switch {
+	case name == "Bash":
+		return tr.styles.BashPrefix
+	case name == "delegate_task":
+		return tr.styles.Delegate
+	case strings.HasPrefix(name, "skill_"):
+		return tr.styles.Skill
+	default:
+		return tr.styles.ToolName
+	}
+}
+
 type Transcript struct {
 	msgs          []TranscriptMsg
 	styles        Styles
@@ -133,8 +147,12 @@ func (tr *Transcript) Render() string {
 		}
 		visible = allLines[start:end]
 	}
+	containerStyle := lipgloss.NewStyle().Width(tr.width)
+	if tr.theme.BG != "" {
+		containerStyle = containerStyle.Background(lipgloss.Color(tr.theme.BG))
+	}
 	if total <= vis {
-		result := lipgloss.NewStyle().Width(tr.width).Render(strings.Join(visible, "\n"))
+		result := containerStyle.Render(strings.Join(visible, "\n"))
 		// Width wrapping may add extra lines. When at bottom, keep the
 		// last vis lines so newest content stays visible; otherwise keep top.
 		resultLines := strings.Split(result, "\n")
@@ -147,8 +165,11 @@ func (tr *Transcript) Render() string {
 		}
 		return result
 	}
-	style := lipgloss.NewStyle().Width(tr.width - 2).Height(vis)
-	content := style.Render(strings.Join(visible, "\n"))
+	scrollStyle := lipgloss.NewStyle().Width(tr.width - 2).Height(vis)
+	if tr.theme.BG != "" {
+		scrollStyle = scrollStyle.Background(lipgloss.Color(tr.theme.BG))
+	}
+	content := scrollStyle.Render(strings.Join(visible, "\n"))
 	sb := tr.renderScrollbar(start, total, vis)
 	result := lipgloss.JoinHorizontal(lipgloss.Left, content, sb)
 	// Width wrapping may add extra lines. When at bottom, keep the
@@ -207,7 +228,7 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 		lines = append(lines,
 			tr.styles.Muted.Render("--- ")+
 				tr.styles.EventPrefix.Render(msg.EventIcon+" "+msg.EventSrc)+
-				tr.styles.UserText.Render("  "+msg.Content+" ---"),
+				tr.styles.UserText.Render("  "+msg.Content)+tr.styles.Muted.Render(" ---"),
 		)
 		lines = append(lines, "")
 	}
@@ -217,10 +238,35 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 func (tr *Transcript) renderToolCall(tc *ToolCall, depth int) []string {
 	var lines []string
 	indent := strings.Repeat("┊ ", depth)
+
+	icon := ToolCallIcon(tc.Name)
+	short := toolCallShortName(tc.Name)
+	ns := tr.nameStyle(tc.Name)
+
+	var parts []string
+	parts = append(parts, ns.Render(icon+" "+short))
+	if tc.Detail != "" {
+		parts = append(parts, tr.styles.UserText.Render(tc.Detail))
+	}
+	if tc.Duration != "" {
+		parts = append(parts, tr.styles.Dim.Render(tc.Duration))
+	}
+	if si := tc.statusIcon(); si != "" {
+		switch tc.Status {
+		case ToolStatusDone:
+			parts = append(parts, tr.styles.ToolName.Render(si))
+		case ToolStatusError:
+			parts = append(parts, tr.styles.Error.Render(si))
+		case ToolStatusRunning:
+			parts = append(parts, tr.styles.Warning.Render(si))
+		}
+	}
+
+	styledLine := strings.Join(parts, " ")
 	if depth == 0 {
-		lines = append(lines, "  "+tc.Format())
+		lines = append(lines, "  "+styledLine)
 	} else {
-		lines = append(lines, "  "+indent+tc.Format())
+		lines = append(lines, "  "+indent+styledLine)
 	}
 	// Output folding
 	if tc.Output != "" {

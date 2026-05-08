@@ -37,6 +37,10 @@ type Manager struct {
 	compactor         Compactor
 	previousSummary   string
 	compressionHistory []CompressionResult
+
+	// Actual token tracking from API responses
+	actualInputTokens int
+	actualMsgIndex    int
 }
 
 // NewManager creates a context manager.
@@ -73,19 +77,40 @@ func (m *Manager) GetMessages() []model.Message {
 }
 
 // TokenCount estimates the current token usage.
+// When actual API token data is available, uses that as the base
+// and estimates only the delta for messages added since.
 func (m *Manager) TokenCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.tokenCountLocked()
+}
 
-	// Estimate: ~4 chars per token
-	count := len(m.cfg.SystemPrompt) / 4
+func (m *Manager) tokenCountLocked() int {
+	if m.actualInputTokens > 0 && m.actualMsgIndex <= len(m.messages) {
+		base := m.actualInputTokens
+		delta := 0
+		for i := m.actualMsgIndex; i < len(m.messages); i++ {
+			delta += len(m.messages[i].Content) / 2
+		}
+		return base + delta
+	}
+	// Fallback: char/2 estimation (more conservative than /4)
+	count := len(m.cfg.SystemPrompt) / 2
 	for _, msg := range m.messages {
-		count += len(msg.Content) / 4
+		count += len(msg.Content) / 2
 		if msg.ToolID != "" {
-			count += len(msg.ToolID) / 4
+			count += len(msg.ToolID) / 2
 		}
 	}
 	return count
+}
+
+// SetActualTokens records the real input token count from an API response.
+func (m *Manager) SetActualTokens(count int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.actualInputTokens = count
+	m.actualMsgIndex = len(m.messages)
 }
 
 // ShouldCompact returns true when compaction should be triggered.
@@ -93,7 +118,10 @@ func (m *Manager) ShouldCompact() bool {
 	if m.cfg.MaxTokens == 0 {
 		return false
 	}
-	ratio := float64(m.TokenCount()) / float64(m.cfg.MaxTokens)
+	m.mu.RLock()
+	count := m.tokenCountLocked()
+	m.mu.RUnlock()
+	ratio := float64(count) / float64(m.cfg.MaxTokens)
 	return ratio >= m.cfg.CompactAt
 }
 
@@ -150,7 +178,7 @@ proceed:
 
 	// Rebuild messages: keepFirst + summary + keepRecent
 	keepFirst := 1
-	keepRecent := 10
+	keepRecent := 20
 	if len(m.messages) <= keepFirst+keepRecent {
 		return
 	}
@@ -161,7 +189,13 @@ proceed:
 		Role:    "user",
 		Content: fmt.Sprintf("[Conversation Summary]\n%s", result.Summary),
 	})
-	newMessages = append(newMessages, m.messages[len(m.messages)-keepRecent:]...)
+tail := m.messages[len(m.messages)-keepRecent:]
+	for i := range tail {
+		if tail[i].Role == "tool" && len(tail[i].Content) > 200 {
+			tail[i].Content = pruneToolOutput(tail[i].Content)
+		}
+	}
+	newMessages = append(newMessages, tail...)
 
 	m.messages = newMessages
 	m.previousSummary = result.Summary
@@ -175,6 +209,7 @@ proceed:
 }
 
 // compactTruncation is the legacy truncation strategy: keep first + last N messages.
+// Tool outputs >200 chars in kept messages are pruned to 1-line summaries.
 func (m *Manager) compactTruncation(keepRecent int) {
 	if len(m.messages) <= keepRecent*2 {
 		return
@@ -184,6 +219,13 @@ func (m *Manager) compactTruncation(keepRecent int) {
 	recent := make([]model.Message, keepRecent)
 	copy(recent, m.messages[len(m.messages)-keepRecent:])
 
+	// Prune large tool outputs in kept messages
+	for i := range recent {
+		if recent[i].Role == "tool" && len(recent[i].Content) > 200 {
+			recent[i].Content = pruneToolOutput(recent[i].Content)
+		}
+	}
+
 	boundary := model.Message{
 		Role:    "user",
 		Content: fmt.Sprintf("[Earlier messages compacted. %d messages removed to stay within context budget.]", len(m.messages)-keepRecent-1),
@@ -192,6 +234,17 @@ func (m *Manager) compactTruncation(keepRecent int) {
 	newMessages := []model.Message{first, boundary}
 	newMessages = append(newMessages, recent...)
 	m.messages = newMessages
+}
+
+// pruneToolOutput reduces a large tool output to a 1-line summary.
+func pruneToolOutput(content string) string {
+	lines := strings.Split(content, "\n")
+	n := len(lines)
+	first := lines[0]
+	if len(first) > 120 {
+		first = first[:120] + "..."
+	}
+	return fmt.Sprintf("[%d lines output] %s", n, first)
 }
 
 func estimateTokensList(messages []model.Message) int {
@@ -228,14 +281,7 @@ func (m *Manager) Snapshot(turnCount int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Inline token count to avoid deadlock (TokenCount also acquires RLock)
-	count := len(m.cfg.SystemPrompt) / 4
-	for _, msg := range m.messages {
-		count += len(msg.Content) / 4
-		if msg.ToolID != "" {
-			count += len(msg.ToolID) / 4
-		}
-	}
+	count := m.tokenCountLocked()
 
 	m.stats = append(m.stats, Snapshot{
 		Time:          time.Now(),
@@ -262,6 +308,8 @@ func (m *Manager) Reset() {
 	m.stats = nil
 	m.previousSummary = ""
 	m.compressionHistory = nil
+	m.actualInputTokens = 0
+	m.actualMsgIndex = 0
 }
 
 // RemainingBudget returns the available token budget.

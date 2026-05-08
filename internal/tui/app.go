@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ type Deps struct {
 	CompEng      *CompletionEngine
 	OnSubmit     func(ctx context.Context, input string, images []string) (string, error)
 	OnSlash      func(cmd string)
+	OnThemeChange func(name string)
 	Send         func(msg tea.Msg) // tea.Program.Send wrapper
 	GetAgentCount func() int
 	GetBgTasks   func() int
@@ -139,6 +141,10 @@ func (a *App) AppendEvent(icon, source, content string) {
 		EventSrc:  source,
 		Content:   content,
 	})
+}
+
+func (a *App) SetModel(name string) {
+	a.statusbar.SetModel(name)
 }
 
 func (a *App) SetBanner(version, model, mode string) {
@@ -368,14 +374,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		a.statusbar.SetElapsed(time.Since(a.startTime).Truncate(time.Second).String())
-		if a.quitConfirm {
-			a.quitConfirm = false
-		}
 		a.transcript.ToggleCursor()
 		// Update status bar with live data from agent
 		if a.deps.Agent != nil {
-			usage := a.deps.Agent.Usage()
-			a.statusbar.SetContextUsage(usage.InputTokens+usage.OutputTokens, a.deps.Agent.MaxTokens())
+			used, max := a.deps.Agent.ContextUsage()
+			a.statusbar.SetContextUsage(used, max)
 		}
 		if a.deps.GetAgentCount != nil {
 			a.statusbar.SetAgentCount(a.deps.GetAgentCount())
@@ -486,6 +489,9 @@ func (a *App) View() tea.View {
 	}
 	if dbgLog != nil {
 		dbgLog.Printf("VIEW: width=%d height=%d joinedLen=%d", a.width, a.height, len(joined))
+	}
+	if a.theme.BG != "" {
+		joined = applyUniformBG(joined, a.width, a.height, a.theme.BG)
 	}
 	v := tea.NewView(joined)
 	v.AltScreen = true
@@ -836,6 +842,9 @@ func (a *App) handleThemeCmd(text string) {
 	name := parts[1]
 	if a.SetTheme(name) {
 		a.transcript.Append(TranscriptMsg{Kind: MsgEvent, EventIcon: "🎨", EventSrc: "theme", Content: fmt.Sprintf("switched to %s", name)})
+		if a.deps.OnThemeChange != nil {
+			a.deps.OnThemeChange(name)
+		}
 	} else {
 		a.transcript.Append(TranscriptMsg{Kind: MsgEvent, EventIcon: "⚠", EventSrc: "theme", Content: fmt.Sprintf("unknown theme: %s (tokyo-night, catppuccin-mocha, light, terminal)", name)})
 	}
@@ -994,4 +1003,43 @@ func runAgentCmd(deps Deps, ctx context.Context, input string, images []string) 
 		}
 		return agentResponseMsg{}
 	}
+}
+
+// bgANSI converts a hex color (#rrggbb) to a CSI background sequence.
+func bgANSI(hex string) string {
+	r, _ := strconv.ParseInt(hex[1:3], 16, 32)
+	g, _ := strconv.ParseInt(hex[3:5], 16, 32)
+	b, _ := strconv.ParseInt(hex[5:7], 16, 32)
+	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+}
+
+// applyUniformBG ensures every visible character in s has the given background
+// color. It does this by injecting the bg ANSI code at the start of each line
+// and after every ANSI reset (\x1b[0m), then padding each line to full width
+// with bg-colored spaces. If content is shorter than height, empty bg-filled
+// lines are appended so the entire terminal has uniform background.
+func applyUniformBG(s string, width, height int, bgHex string) string {
+	bgSeq := bgANSI(bgHex)
+	// lipgloss v2 uses \x1b[m for SGR reset (not \x1b[0m).
+	// Re-apply bg immediately after every reset.
+	s = strings.ReplaceAll(s, "\x1b[m", "\x1b[m"+bgSeq)
+	// Also handle \x1b[0m just in case
+	s = strings.ReplaceAll(s, "\x1b[0m", "\x1b[0m"+bgSeq)
+	// Process each line: prepend bg and pad to full width
+	lines := strings.Split(s, "\n")
+	padSpaces := strings.Repeat(" ", width)
+	for i, line := range lines {
+		line = bgSeq + line
+		vis := lipgloss.Width(line)
+		if vis < width {
+			line += padSpaces[:width-vis]
+		}
+		lines[i] = line
+	}
+	// Pad to full terminal height so bottom of screen has bg too
+	emptyLine := bgSeq + padSpaces
+	for len(lines) < height {
+		lines = append(lines, emptyLine)
+	}
+	return strings.Join(lines, "\n")
 }

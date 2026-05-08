@@ -62,9 +62,9 @@ func TestCompressionIntegration_ShouldCompactTriggersCompression(t *testing.T) {
 	msgs := mgr.GetMessages()
 	t.Logf("After compact: messages=%d, tokens=%d", len(msgs), mgr.TokenCount())
 
-	// LLM 压缩固定 keepFirst=1, keepRecent=10: 1 + 1 (summary) + 10 = 12
-	if len(msgs) != 12 {
-		t.Errorf("expected 12 messages after compression (1+1+10), got %d", len(msgs))
+	// LLM 压缩固定 keepFirst=1, keepRecent=20: 1 + 1 (summary) + 20 = 22
+	if len(msgs) != 22 {
+		t.Errorf("expected 22 messages after compression (1+1+20), got %d", len(msgs))
 	}
 
 	// 第一条是原始消息
@@ -83,8 +83,8 @@ func TestCompressionIntegration_ShouldCompactTriggersCompression(t *testing.T) {
 		t.Error("expected structured summary with Pending Items section")
 	}
 
-	// 最后 10 条是最近消息
-	for i := 2; i <= 11; i++ {
+	// 最后 20 条是最近消息
+	for i := 2; i <= 21; i++ {
 		if msgs[i].Role != "user" {
 			t.Errorf("expected recent msg[%d] role=user, got %s", i, msgs[i].Role)
 		}
