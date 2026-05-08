@@ -56,7 +56,7 @@ var Themes = map[string]Theme{
 		Name: "tokyo-night", BG: "#1a1b26",
 		Text: "#c0caf5", Accent: "#2ac3de", Green: "#9ece6a",
 		Orange: "#ff9e64", Purple: "#bb9af7", Yellow: "#e0af68",
-		Red: "#f7768e", Muted: "#565f89", Border: "#3b3d57",
+		Red: "#f7768e", Muted: "#565f89", Border: "#3b4261",
 	},
 	"catppuccin-mocha": {
 		Name: "catppuccin-mocha", BG: "#11111b",
