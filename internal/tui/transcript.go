@@ -252,7 +252,7 @@ func (tr *Transcript) renderScrollbar(offset, total, visible int) string {
 			sb.WriteString("│")
 		}
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(tr.theme.Muted)).Render(sb.String())
+	return tr.styles.Dim.Render(sb.String())
 }
 
 func (tr *Transcript) scrollToBottom() { tr.yOffset = tr.maxScrollOffset() }
