@@ -62,6 +62,10 @@ type App struct {
 	attaching   bool
 	attachInput []rune
 	cancelFn    context.CancelFunc
+	// Selection state
+	sel          *Selection
+	rawContent   string
+	rawLineCount int
 }
 
 func (a *App) SetSend(send func(msg tea.Msg)) {
@@ -83,6 +87,7 @@ func NewApp(deps Deps) *App {
 		composer:   NewComposer(),
 		statusbar:  sb,
 		startTime:  time.Now(),
+		sel:        newSelection(),
 	}
 }
 
@@ -147,6 +152,31 @@ func (a *App) SetBanner(version, model, mode string) {
 	a.transcript.SetBanner(strings.Join(parts, " │ "))
 }
 
+func (a *App) SetTheme(name string) bool {
+	th := LoadTheme(name)
+	if dbgLog != nil {
+		dbgLog.Printf("THEME: SetTheme(%q) → loaded %q", name, th.Name)
+	}
+	if th.Name != name {
+		return false
+	}
+	return a.SetThemeObj(th)
+}
+
+func (a *App) SetThemeObj(th Theme) bool {
+	if _, ok := Themes[th.Name]; !ok {
+		return false
+	}
+	a.theme = th
+	a.styles = th.Styles()
+	a.transcript.SetTheme(a.styles, a.theme)
+	a.statusbar.SetTheme(a.theme)
+	if dbgLog != nil {
+		dbgLog.Printf("THEME: SetThemeObj(%q) done, styles.Accent=%v", th.Name, a.styles.Accent)
+	}
+	return true
+}
+
 func (a *App) Init() tea.Cmd {
 	return tickCmd()
 }
@@ -156,10 +186,92 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = m.Width
 		a.height = m.Height
-		a.transcript.Resize(a.width, a.height-6)
+		a.sel.Clear()
+		return a, nil
+
+	case tea.MouseClickMsg:
+		mm := m.Mouse()
+		if mm.Button == tea.MouseRight && a.sel.HasSelection() {
+			start, end, ok := a.sel.Bounds()
+			if ok {
+				text := SelectedText(a.rawContent, start, end)
+				if text != "" {
+					a.sel.Clear()
+					return a, tea.SetClipboard(text)
+				}
+			}
+			a.sel.Clear()
+			return a, nil
+		}
+		if mm.Button == tea.MouseLeft {
+			row := mm.Y
+			if row < 0 {
+				row = 0
+			}
+			if a.rawLineCount > 0 && row >= a.rawLineCount {
+				row = a.rawLineCount - 1
+			}
+			a.sel.Clear()
+			a.sel.Start(mm.X, row)
+		}
+		return a, nil
+
+	case tea.MouseMotionMsg:
+		if a.sel.IsDragging() {
+			mm := m.Mouse()
+			row := mm.Y
+			if row < 0 {
+				row = 0
+			}
+			if a.rawLineCount > 0 && row >= a.rawLineCount {
+				row = a.rawLineCount - 1
+			}
+			a.sel.Update(mm.X, row)
+		}
+		return a, nil
+
+	case tea.MouseReleaseMsg:
+		if a.sel.IsDragging() {
+			a.sel.Finish()
+			// Only clear click-without-drag; keep valid selection for Ctrl+C / right-click
+			if a.sel.HasSelection() {
+				start, end, ok := a.sel.Bounds()
+				if ok && start == end {
+					a.sel.Clear()
+				}
+			}
+		}
+		return a, nil
+
+	case tea.MouseWheelMsg:
+		mm := m.Mouse()
+		switch mm.Button {
+		case tea.MouseWheelUp:
+			a.transcript.ScrollUp(3)
+		case tea.MouseWheelDown:
+			a.transcript.ScrollDown(3)
+		}
 		return a, nil
 
 	case tea.KeyPressMsg:
+		// Selection-aware keys take priority
+		if a.sel.HasSelection() {
+			if m.Code == tea.KeyEscape {
+				a.sel.Clear()
+				return a, nil
+			}
+			if m.Code == 'c' && m.Mod == tea.ModCtrl {
+				start, end, ok := a.sel.Bounds()
+				if ok {
+					text := SelectedText(a.rawContent, start, end)
+					a.sel.Clear()
+					if text != "" {
+						return a, tea.SetClipboard(text)
+					}
+				}
+				return a, nil
+			}
+		}
 		prevText := a.composer.Text()
 		m2, cmd := a.handleKey(m)
 		if a.composer.Text() != prevText {
@@ -171,7 +283,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m2, cmd
 
 	case tea.PasteMsg:
-		a.composer.SetInput(a.composer.Text() + m.Content)
+		a.composer.InsertText(m.Content)
+		if dbgLog != nil {
+			dbgLog.Printf("PASTE: len=%d lines=%d composerLines=%d", len(m.Content), strings.Count(m.Content, "\n")+1, len(a.composer.lines))
+		}
 		w, h := a.width, a.height
 		return a, func() tea.Msg {
 			return tea.WindowSizeMsg{Width: w, Height: h}
@@ -200,13 +315,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.deps.OnSlash(cmd)
 			}
 		}
-		return a, nil
+		return a, a.fullRedraw()
 
 	case EventMsg:
 		a.transcript.Append(TranscriptMsg{
 			Kind: MsgEvent, EventIcon: m.Icon, EventSrc: m.Source, Content: m.Content,
 		})
-		return a, nil
+		return a, a.fullRedraw()
 
 	case streamChunkMsg:
 		msgs := a.transcript.Messages()
@@ -228,7 +343,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Status: ToolStatusRunning,
 			},
 		})
-		return a, nil
+		return a, a.fullRedraw()
 
 	case ToolEndEvent:
 		tmsgs := a.transcript.Messages()
@@ -249,7 +364,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		return a, nil
+		return a, a.fullRedraw()
 
 	case tickMsg:
 		a.statusbar.SetElapsed(time.Since(a.startTime).Truncate(time.Second).String())
@@ -284,42 +399,103 @@ func (a *App) View() tea.View {
 	if a.width == 0 {
 		return tea.NewView("Loading...")
 	}
-	transcriptView := a.transcript.Render()
 	divider := lipgloss.NewStyle().Foreground(lipgloss.Color(a.theme.Border)).Render(
 		strings.Repeat("─", a.width),
 	)
 	statusView := a.statusbar.Render(a.width)
 	var composerView string
+	var compScrollOff int
 	if a.approval != nil {
 		composerView = a.approval.Render(a.theme)
 	} else {
-		composerView = a.renderComposer()
+		composerView, compScrollOff = a.renderComposer(maxComposerLines)
 	}
 	compView := a.renderCompletions()
 	queueView := a.renderQueue()
-	parts := []string{transcriptView, divider}
+	hintView := ""
+	if a.approval == nil {
+		hintView = a.renderHints()
+	}
+	// Build non-transcript parts and measure their actual joined height
+	var belowParts []string
+	if a.busy {
+		belowParts = append(belowParts, a.styles.Warning.Render("⏳ agent busy..."))
+	}
+	belowParts = append(belowParts, divider)
 	if queueView != "" {
-		parts = append(parts, queueView)
+		belowParts = append(belowParts, queueView)
 	}
 	if compView != "" {
-		parts = append(parts, compView)
+		belowParts = append(belowParts, compView)
 	}
-	parts = append(parts, composerView, divider, statusView)
-	if a.approval == nil {
-		parts = append(parts, a.renderHints())
+	belowParts = append(belowParts, composerView, divider, statusView)
+	if hintView != "" {
+		belowParts = append(belowParts, hintView)
 	}
 	if a.quitConfirm {
-		hint := a.styles.Warning.Render("  再按 Ctrl+C 退出")
-		parts = append(parts, hint)
+		belowParts = append(belowParts, a.styles.Warning.Render("  再按 Ctrl+C 退出"))
 	}
+	belowJoined := lipgloss.JoinVertical(lipgloss.Left, belowParts...)
+	bottomLines := strings.Count(belowJoined, "\n") + 1
+	transcriptHeight := a.height - bottomLines
+	if transcriptHeight < 3 {
+		transcriptHeight = 3
+	}
+	a.transcript.Resize(a.width, transcriptHeight)
+	transcriptView := a.transcript.Render()
+	transLines := strings.Count(transcriptView, "\n") + 1
+	// Safety: clip transcript if it exceeds allocated height (Width wrapping may add lines)
+	if transLines > transcriptHeight {
+		lines := strings.Split(transcriptView, "\n")
+		transcriptView = strings.Join(lines[:transcriptHeight], "\n")
+		transLines = transcriptHeight
+	}
+	parts := []string{transcriptView}
+	parts = append(parts, belowParts...)
 	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	joinedLines := strings.Count(joined, "\n") + 1
+	// Clip if the joined content exceeds terminal height
+	clipped := false
+	if joinedLines > a.height {
+		lines := strings.Split(joined, "\n")
+		joined = strings.Join(lines[:a.height], "\n")
+		clipped = true
+	}
+	if dbgLog != nil {
+		qLines := 0
+		if queueView != "" { qLines = strings.Count(queueView, "\n") + 1 }
+		cLines := 0
+		if compView != "" { cLines = strings.Count(compView, "\n") + 1 }
+		hLines := 0
+		if hintView != "" { hLines = strings.Count(hintView, "\n") + 1 }
+		qi := 0; if a.quitConfirm { qi = 1 }
+		dbgLog.Printf("LAYOUT: theme=%s term=%dx%d busy=%v comp=(total=%d,vis=%d,scroll=%d) queue=%d compH=%d hint=%d quit=%d => bottom=%d transH=%d transRendered=%d joined=%d clipped=%v",
+			a.theme.Name, a.width, a.height, a.busy,
+			len(a.composer.lines), strings.Count(composerView, "\n")+1,
+			compScrollOff,
+			qLines, cLines, hLines, qi,
+			bottomLines, transcriptHeight, transLines, joinedLines, clipped)
+	}
+		a.rawContent = joined
+a.rawContent = joined
+	a.rawLineCount = strings.Count(joined, "\n") + 1
+	if a.sel.HasSelection() {
+		start, end, ok := a.sel.Bounds()
+		if ok {
+			joined = applySelectionToContent(joined, start, end)
+		}
+	}
 	if dbgLog != nil {
 		dbgLog.Printf("VIEW: width=%d height=%d joinedLen=%d", a.width, a.height, len(joined))
 	}
 	v := tea.NewView(joined)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	if a.approval == nil {
-		cursorX, cursorY := a.computeCursorPos(transcriptView, queueView, compView)
+		cursorX, cursorY := a.computeCursorPos(transcriptView, queueView, compView, compScrollOff)
+		if a.busy {
+			cursorY++
+		}
 		if dbgLog != nil {
 			dbgLog.Printf("CURSOR: x=%d y=%d", cursorX, cursorY)
 		}
@@ -329,7 +505,7 @@ func (a *App) View() tea.View {
 	return v
 }
 
-func (a *App) computeCursorPos(transcriptView, queueView, compView string) (int, int) {
+func (a *App) computeCursorPos(transcriptView, queueView, compView string, compScrollOff int) (int, int) {
 	transLines := strings.Count(transcriptView, "\n") + 1
 	if transcriptView == "" {
 		transLines = 0
@@ -345,22 +521,43 @@ func (a *App) computeCursorPos(transcriptView, queueView, compView string) (int,
 	compText := a.composer.Text()
 	if compText == "" {
 		cursorX := lipgloss.Width(a.styles.Prompt.Render("❯ "))
+		if dbgLog != nil {
+			dbgLog.Printf("CURSOR: empty comp transLines=%d compStart=%d => (%d,%d)", transLines, compStartLine, cursorX, compStartLine)
+		}
 		return cursorX, compStartLine
 	}
+	// Account for truncated composer lines hint
+	if compScrollOff > 0 {
+		compStartLine++ // "↑ N more lines" hint
+	}
+	if curRow >= compScrollOff {
+		curRow -= compScrollOff
+	} else {
+		curRow = 0
+	}
 	clines := strings.Split(compText, "\n")
-	if curRow < len(clines) {
+	if curRow >= 0 && curRow < maxComposerLines {
 		prefix := "  "
-		if curRow == 0 {
+		if curRow+compScrollOff == 0 {
 			prefix = a.styles.Prompt.Render("❯ ")
 		}
 		prefixW := lipgloss.Width(prefix)
-		runes := []rune(clines[curRow])
-		if curCol > len(runes) {
-			curCol = len(runes)
+		idx := curRow + compScrollOff
+		if idx < len(clines) {
+			runes := []rune(clines[idx])
+			if curCol > len(runes) {
+				curCol = len(runes)
+			}
+			textBefore := string(runes[:curCol])
+			cursorX := prefixW + lipgloss.Width(textBefore)
+			if dbgLog != nil {
+				dbgLog.Printf("CURSOR: transLines=%d compStart=%d scrollOff=%d visRow=%d visCol=%d idx=%d => (%d,%d)", transLines, compStartLine, compScrollOff, curRow, curCol, idx, cursorX, compStartLine+curRow)
+			}
+			return cursorX, compStartLine + curRow
 		}
-		textBefore := string(runes[:curCol])
-		cursorX := prefixW + lipgloss.Width(textBefore)
-		return cursorX, compStartLine + curRow
+	}
+	if dbgLog != nil {
+		dbgLog.Printf("CURSOR: fallback compStart=%d => (0,%d)", compStartLine, compStartLine)
 	}
 	return 0, compStartLine
 }
@@ -403,8 +600,8 @@ func (a *App) handleAttachKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if dbgLog != nil {
 		cr, cc := a.composer.CursorPos()
-		dbgLog.Printf("KEY: code=%d mod=%d text=%q composer=%q curRow=%d curCol=%d",
-			msg.Code, msg.Mod, msg.Text, a.composer.Text(), cr, cc)
+		dbgLog.Printf("KEY: code=%d mod=%d text=%q composerLines=%d curRow=%d curCol=%d",
+			msg.Code, msg.Mod, msg.Text, len(a.composer.lines), cr, cc)
 	}
 	if a.approval != nil {
 		result := a.approval.HandleKey(msg.String())
@@ -451,6 +648,18 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Ctrl+J (non-Kitty Ctrl+Enter fallback)
 	if code == 'j' && mod == tea.ModCtrl {
 		a.composer.InsertNewLine()
+		return a, nil
+	}
+	// Ctrl+O: toggle thinking/tool fold
+	if code == 'o' && mod == tea.ModCtrl {
+		a.transcript.ToggleFold()
+		return a, nil
+	}
+	// Ctrl+L: clear transcript (preserve banner)
+	if (code == 'l' && mod == tea.ModCtrl) || code == 12 {
+		a.transcript.msgs = nil
+		a.transcript.yOffset = 0
+		a.transcript.atBottom = true
 		return a, nil
 	}
 
@@ -520,13 +729,17 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		if a.composer.MoveUp() {
+			return a, nil
+		}
 		if !a.composer.AtFirstLineStart() {
-			a.composer.MoveUp()
+			a.composer.MoveHome()
 			return a, nil
 		}
 		if a.deps.History != nil {
 			if entry := a.deps.History.Older(); entry != "" {
 				a.composer.SetInput(entry)
+				a.composer.MoveToStart()
 			}
 		}
 		return a, nil
@@ -538,12 +751,19 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		if a.composer.MoveDown() {
+			return a, nil
+		}
 		if !a.composer.AtLastLineEnd() {
-			a.composer.MoveDown()
+			a.composer.MoveEnd()
 			return a, nil
 		}
 		if a.deps.History != nil {
-			a.composer.SetInput(a.deps.History.Newer())
+			if entry := a.deps.History.Newer(); entry != "" {
+				a.composer.SetInput(entry)
+			} else {
+				a.composer.Clear()
+			}
 		}
 		return a, nil
 	case tea.KeyPgUp:
@@ -575,6 +795,12 @@ func (a *App) submitInput() (tea.Model, tea.Cmd) {
 	a.compActive = false
 	a.compIdx = 0
 	if strings.HasPrefix(text, "/") {
+		// /theme is handled locally (needs App state)
+		if strings.HasPrefix(text, "/theme") {
+			a.handleThemeCmd(text)
+			a.composer.Clear()
+			return a, a.fullRedraw()
+		}
 		if a.deps.OnSlash != nil {
 			a.deps.OnSlash(text)
 		}
@@ -598,6 +824,30 @@ func (a *App) submitInput() (tea.Model, tea.Cmd) {
 		a.cancelFn = cancel
 		return a, runAgentCmd(a.deps, ctx, text, images)
 	}
+
+func (a *App) handleThemeCmd(text string) {
+	if dbgLog != nil {
+		dbgLog.Printf("THEME: handleThemeCmd(%q)", text)
+	}
+	parts := strings.Fields(text)
+	if len(parts) == 1 {
+		a.transcript.Append(TranscriptMsg{Kind: MsgEvent, EventIcon: "🎨", EventSrc: "theme", Content: fmt.Sprintf("current: %s | tokyo-night, catppuccin-mocha, light, terminal", a.theme.Name)})
+		return
+	}
+	name := parts[1]
+	if a.SetTheme(name) {
+		a.transcript.Append(TranscriptMsg{Kind: MsgEvent, EventIcon: "🎨", EventSrc: "theme", Content: fmt.Sprintf("switched to %s", name)})
+	} else {
+		a.transcript.Append(TranscriptMsg{Kind: MsgEvent, EventIcon: "⚠", EventSrc: "theme", Content: fmt.Sprintf("unknown theme: %s (tokyo-night, catppuccin-mocha, light, terminal)", name)})
+	}
+}
+
+func (a *App) fullRedraw() tea.Cmd {
+	w, h := a.width, a.height
+	return func() tea.Msg {
+		return tea.WindowSizeMsg{Width: w, Height: h}
+	}
+}
 
 func (a *App) renderCompletions() string {
 	if !a.compActive || len(a.compItems) == 0 {
@@ -647,23 +897,34 @@ func (a *App) renderQueue() string {
 	return a.styles.Warning.Render(summary)
 }
 
-func (a *App) renderComposer() string {
+const maxComposerLines = 5
+
+func (a *App) renderComposer(maxLines int) (view string, scrollOff int) {
 	var parts []string
-	if a.busy {
-		parts = append(parts, a.styles.Warning.Render("⏳ agent busy..."))
-	}
 	text := a.composer.Text()
 	if text == "" {
 		parts = append(parts, a.styles.Prompt.Render("❯ "))
-	} else {
-		lines := strings.Split(text, "\n")
-		for i, line := range lines {
-			if i == 0 {
-				parts = append(parts, a.styles.Prompt.Render("❯ ")+line)
-			} else {
-				parts = append(parts, "  "+line)
-			}
+		return strings.Join(parts, "\n"), 0
+	}
+	lines := strings.Split(text, "\n")
+	start, _ := a.composer.VisibleRange(maxLines)
+	end := start + maxLines
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start > 0 {
+		parts = append(parts, a.styles.Muted.Render(fmt.Sprintf("↑ %d more lines", start)))
+	}
+	for i := start; i < end; i++ {
+		line := lines[i]
+		if i == 0 {
+			parts = append(parts, a.styles.Prompt.Render("❯ ")+line)
+		} else {
+			parts = append(parts, "  "+line)
 		}
+	}
+	if end < len(lines) {
+		parts = append(parts, a.styles.Muted.Render(fmt.Sprintf("↓ %d more lines", len(lines)-end)))
 	}
 	for _, att := range a.composer.Attachments() {
 		icon := "📎"
@@ -672,7 +933,7 @@ func (a *App) renderComposer() string {
 		}
 		parts = append(parts, a.styles.EventPrefix.Render(icon+" "+att.Path)+" "+a.styles.Error.Render("✕"))
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), start
 }
 
 func (a *App) renderHints() string {

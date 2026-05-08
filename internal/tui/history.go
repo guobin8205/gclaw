@@ -1,8 +1,10 @@
 package tui
 
 import (
-	"bufio"
+	"fmt"
+	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -120,12 +122,9 @@ func (h *History) Save() {
 		return
 	}
 	defer f.Close()
-	w := bufio.NewWriter(f)
 	for _, e := range h.entries {
-		w.WriteString(e)
-		w.WriteByte('\n')
+		fmt.Fprintf(f, "%d\n%s", len(e), e)
 	}
-	w.Flush()
 }
 
 func (h *History) load() {
@@ -137,12 +136,30 @@ func (h *History) load() {
 		return
 	}
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
-			h.entries = append(h.entries, line)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return
+	}
+	s := string(data)
+	for len(s) > 0 {
+		nl := strings.IndexByte(s, '\n')
+		if nl < 0 {
+			break
 		}
+		n, err := strconv.Atoi(s[:nl])
+		if err != nil || n < 0 {
+			break
+		}
+		start := nl + 1
+		end := start + n
+		if end > len(s) {
+			break
+		}
+		entry := s[start:end]
+		if entry != "" {
+			h.entries = append(h.entries, entry)
+		}
+		s = s[end:]
 	}
 	if len(h.entries) > h.max {
 		h.entries = h.entries[len(h.entries)-h.max:]

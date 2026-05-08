@@ -62,6 +62,45 @@ func (c *Composer) InsertNewLine() {
 	c.curCol = 0
 }
 
+func (c *Composer) InsertText(text string) {
+	// Normalize line endings (Windows \r\n and legacy \r)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	// Strip trailing newlines unless the entire text is just newlines
+	if strings.TrimRight(text, "\n") != "" {
+		text = strings.TrimRight(text, "\n")
+	}
+	if len(text) == 0 {
+		return
+	}
+	lines := strings.Split(text, "\n")
+	// Single line: insert at cursor
+	if len(lines) == 1 {
+		runes := []rune(lines[0])
+		line := c.lines[c.curRow]
+		c.lines[c.curRow] = append(line[:c.curCol], append(runes, line[c.curCol:]...)...)
+		c.curCol += len(runes)
+		return
+	}
+	// Multi-line: split current line at cursor, insert pasted lines in between
+	line := c.lines[c.curRow]
+	before := append([]rune{}, line[:c.curCol]...)
+	after := append([]rune{}, line[c.curCol:]...)
+	before = append(before, []rune(lines[0])...)
+	newLines := make([][]rune, 0, len(c.lines)+len(lines)-1)
+	newLines = append(newLines, c.lines[:c.curRow]...)
+	newLines = append(newLines, before)
+	for i := 1; i < len(lines)-1; i++ {
+		newLines = append(newLines, []rune(lines[i]))
+	}
+	lastLine := append([]rune(lines[len(lines)-1]), after...)
+	newLines = append(newLines, lastLine)
+	newLines = append(newLines, c.lines[c.curRow+1:]...)
+	c.lines = newLines
+	c.curRow += len(lines) - 1
+	c.curCol = len([]rune(lines[len(lines)-1]))
+}
+
 func (c *Composer) Backspace() {
 	if c.curCol > 0 {
 		line := c.lines[c.curRow]
@@ -111,8 +150,9 @@ func (c *Composer) MoveRight() {
 	}
 }
 
-func (c *Composer) MoveHome() { c.curCol = 0 }
-func (c *Composer) MoveEnd()  { c.curCol = len(c.lines[c.curRow]) }
+func (c *Composer) MoveHome()    { c.curCol = 0 }
+func (c *Composer) MoveEnd()     { c.curCol = len(c.lines[c.curRow]) }
+func (c *Composer) MoveToStart() { c.curRow = 0; c.curCol = 0 }
 
 func (c *Composer) MoveUp() bool {
 	if c.curRow == 0 {
@@ -148,6 +188,24 @@ func (c *Composer) AtLastLineEnd() bool {
 
 // CursorPos returns the current cursor row and column.
 func (c *Composer) CursorPos() (row, col int) { return c.curRow, c.curCol }
+
+// VisibleRange returns the start line index and cursor row offset for
+// rendering at most maxLines visible lines, keeping the cursor in view.
+func (c *Composer) VisibleRange(maxLines int) (start, curOffset int) {
+	total := len(c.lines)
+	if total <= maxLines {
+		return 0, c.curRow
+	}
+	// Ensure cursor is visible
+	if c.curRow < maxLines/2 {
+		start = 0
+	} else if c.curRow >= total-maxLines/2 {
+		start = total - maxLines
+	} else {
+		start = c.curRow - maxLines/2
+	}
+	return start, c.curRow - start
+}
 
 func (c *Composer) AddAttachment(path string, isImage bool) {
 	c.attachments = append(c.attachments, Attachment{Path: path, IsImage: isImage})

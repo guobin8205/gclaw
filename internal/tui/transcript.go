@@ -101,6 +101,8 @@ func (tr *Transcript) findLastCollapsed(tc *ToolCall) *ToolCall {
 func (tr *Transcript) Messages() []TranscriptMsg { return tr.msgs }
 func (tr *Transcript) SetBanner(banner string)    { tr.banner = banner }
 
+func (tr *Transcript) SetTheme(styles Styles, theme Theme) { tr.styles = styles; tr.theme = theme }
+
 func (tr *Transcript) Render() string {
 	if tr.height <= 0 || tr.width <= 0 {
 		return ""
@@ -132,12 +134,34 @@ func (tr *Transcript) Render() string {
 		visible = allLines[start:end]
 	}
 	if total <= vis {
-		return lipgloss.NewStyle().Width(tr.width).Render(strings.Join(visible, "\n"))
+		result := lipgloss.NewStyle().Width(tr.width).Render(strings.Join(visible, "\n"))
+		// Width wrapping may add extra lines. When at bottom, keep the
+		// last vis lines so newest content stays visible; otherwise keep top.
+		resultLines := strings.Split(result, "\n")
+		if len(resultLines) > vis {
+			if tr.atBottom {
+				result = strings.Join(resultLines[len(resultLines)-vis:], "\n")
+			} else {
+				result = strings.Join(resultLines[:vis], "\n")
+			}
+		}
+		return result
 	}
 	style := lipgloss.NewStyle().Width(tr.width - 2).Height(vis)
 	content := style.Render(strings.Join(visible, "\n"))
 	sb := tr.renderScrollbar(start, total, vis)
-	return lipgloss.JoinHorizontal(lipgloss.Left, content, sb)
+	result := lipgloss.JoinHorizontal(lipgloss.Left, content, sb)
+	// Width wrapping may add extra lines. When at bottom, keep the
+	// last vis lines so newest content stays visible; otherwise keep top.
+	resultLines := strings.Split(result, "\n")
+	if len(resultLines) > vis {
+		if tr.atBottom {
+			result = strings.Join(resultLines[len(resultLines)-vis:], "\n")
+		} else {
+			result = strings.Join(resultLines[:vis], "\n")
+		}
+	}
+	return result
 }
 
 func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
@@ -233,8 +257,10 @@ func (tr *Transcript) renderScrollbar(offset, total, visible int) string {
 
 func (tr *Transcript) scrollToBottom() { tr.yOffset = tr.maxScrollOffset() }
 func (tr *Transcript) maxScrollOffset() int {
-	// approximate: count rendered lines
 	n := 0
+	if tr.banner != "" {
+		n += 2 // banner line + separator
+	}
 	for _, msg := range tr.msgs {
 		n += len(tr.renderMessage(msg))
 	}

@@ -32,6 +32,8 @@ func (sb *StatusBar) SetBackgroundTasks(n int) { sb.bgTasks = n }
 func (sb *StatusBar) SetCronActive(on bool)   { sb.cronOn = on }
 func (sb *StatusBar) SetElapsed(s string)     { sb.elapsed = s }
 
+func (sb *StatusBar) SetTheme(th Theme) { sb.theme = th; sb.styles = th.Styles() }
+
 func (sb *StatusBar) Render(width int) string {
 	var parts []string
 

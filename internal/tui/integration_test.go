@@ -284,13 +284,18 @@ func TestSimHistory(t *testing.T) {
 	if s.app.composer.Text() != "first" {
 		t.Errorf("up 3x: got %q", s.app.composer.Text())
 	}
+	// After Up, cursor is at line start; first Down moves to line end
+	s.press("down")
+	if s.app.composer.Text() != "first" {
+		t.Errorf("down to end: got %q", s.app.composer.Text())
+	}
 	s.press("down")
 	if s.app.composer.Text() != "second" {
-		t.Errorf("down: got %q", s.app.composer.Text())
+		t.Errorf("down 2x: got %q", s.app.composer.Text())
 	}
 	s.press("down")
 	if s.app.composer.Text() != "third" {
-		t.Errorf("down 2x: got %q", s.app.composer.Text())
+		t.Errorf("down 3x: got %q", s.app.composer.Text())
 	}
 	s.press("down")
 	if s.app.composer.Text() != "" {
