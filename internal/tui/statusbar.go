@@ -44,7 +44,8 @@ func (sb *StatusBar) Render(width int) string {
 		dotColor = sb.theme.Red
 	}
 	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render("●")
-	parts = append(parts, dot+" "+sb.model)
+	modelName := sb.styles.Accent.Render(sb.model)
+	parts = append(parts, dot+" "+modelName)
 
 	if sb.ctxTotal > 0 {
 		parts = append(parts, fmt.Sprintf("ctx: %s/%s", formatTokens(sb.ctxInput), formatTokens(sb.ctxTotal)))

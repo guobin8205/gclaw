@@ -842,10 +842,7 @@ func (a *App) handleThemeCmd(text string) {
 }
 
 func (a *App) fullRedraw() tea.Cmd {
-	w, h := a.width, a.height
-	return func() tea.Msg {
-		return tea.WindowSizeMsg{Width: w, Height: h}
-	}
+	return tickCmd()
 }
 
 func (a *App) renderCompletions() string {
