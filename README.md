@@ -37,19 +37,21 @@ gclaw dev — interactive mode | deepseek-v4-pro | type /help
 
 - **多模型支持** — DeepSeek、GLM（智谱）、Claude、OpenAI、Ollama，自动回退
 - **多凭证池** — 同一 provider 配多个 API Key，round-robin 轮转，429 限速自动切换，冷却后恢复
+- **Bubble Tea TUI** — AltScreen 全屏界面，虚拟滚动，鼠标选择复制，4 种内置主题
 - **三级自主模式** — interactive（交互）/ semi（半自主）/ full（全自主心跳驱动）
 - **中断系统** — 自治模式下可向运行中的 agent 注入消息，改变执行方向
 - **微信通道** — 扫码登录，双向消息，cron 结果推送
-- **定时任务** — 内置 cron 调度，支持独立模型，微信通知
-- **内置工具** — ReadFile、WriteFile、Bash、Glob、Grep、SleepTool，支持自注册扩展
+- **定时任务** — 内置 cron 调度，支持独立模型，微信通知，无 Agent 脚本模式
+- **丰富工具集** — 文件读写、Shell、搜索、网页搜索/提取、浏览器自动化、MCP、Vision、TTS、视频理解、代码执行、图像生成等
 - **权限系统** — 洋葱模型，glob 规则匹配，四种执行模式
 - **LLM 智能压缩** — 用辅助模型生成结构化摘要，替代粗暴截断，保留任务上下文
-- **Skill 系统** — 可复用程序性知识单元，YAML frontmatter + Markdown，支持 Agent 自创建
+- **Skill 系统** — 可复用程序性知识单元，YAML frontmatter + Markdown，支持 Agent 自创建和 Curator 自动维护
 - **记忆系统** — 跨对话记忆，自动 prefetch/sync，支持多 provider fan-out
 - **会话持久化** — SQLite + FTS5 全文搜索，对话历史永久保存
 - **子代理委派** — 主 Agent 可委派子代理并行执行，信号量控制并发
 - **统一路由** — Gateway 抽象平台差异，REPL/微信统一接入
 - **任务管理** — 异步后台任务，并发控制，DAG 依赖
+- **检查点管理** — Git 影子仓库自动快照，支持回滚
 
 ## 模型提供者
 
@@ -128,13 +130,18 @@ logging:
 | 命令 | 功能 |
 |------|------|
 | `/help` | 帮助信息 |
+| `/status` | 综合面板（模型、上下文、Agent 状态） |
+| `/model [name]` | 查看/切换当前模型 |
+| `/tools [all]` | 列出可用工具 |
 | `/stats` | 上下文和 token 用量 |
 | `/autonomy` | 自主调度器状态 |
 | `/cron` | 定时任务状态 |
 | `/weixin` | 微信通道 login|logout|status |
 | `/tasks` | 后台任务列表 |
+| `/skills` | 列出已加载 skills |
 | `/config` | 当前配置 |
 | `/compact` | 手动压缩上下文 |
+| `/logs [N]` | 查看最近日志 |
 | `/interrupt <msg>` | 向运行中的 Agent 注入中断消息 |
 | `/clear` | 清空对话 |
 | `/exit` | 退出 |
@@ -156,7 +163,7 @@ logging:
 
 ```
 gclaw/
-├── cmd/gclaw/           # 主入口 (REPL + 微信 + Cron)
+├── cmd/gclaw/           # 主入口 (TUI + 微信 + Cron)
 ├── internal/
 │   ├── agent/           # Agent 核心循环（中断/压缩）
 │   ├── autonomous/      # 自主模式调度器
@@ -165,6 +172,7 @@ gclaw/
 │   ├── config/          # 配置加载与验证
 │   ├── context/         # 上下文窗口管理 + LLM 压缩器
 │   ├── cron/            # 定时任务调度器
+│   ├── curator/         # Skill 自动维护（管家）
 │   ├── delegate/        # 子代理委派
 │   ├── gateway/         # 统一路由层
 │   │   └── adapter/     # REPL/微信适配器
@@ -176,9 +184,14 @@ gclaw/
 │   ├── perm/            # 权限检查
 │   ├── provider/        # 模型工厂 + 凭证池
 │   ├── session/         # SQLite + FTS5 会话持久化
-│   ├── skill/           # Skill 文件系统
+│   ├── skill/           # Skill 文件系统 + 内置 skills
 │   ├── task/            # 后台任务管理
+│   ├── tui/             # Bubble Tea v2 TUI（App, Transcript, Composer, StatusBar, Selection）
 │   └── tool/builtin/    # 内置工具（自注册）
+│       ├── browser/     # 浏览器自动化
+│       ├── mcp/         # MCP 客户端
+│       ├── web/         # 网页搜索和提取
+│       └── ...          # 文件、Shell、搜索、多媒体等
 ├── docs/                # 文档
 ├── .gclaw/              # 项目配置 + 内置 skills
 └── plugins/             # 插件系统

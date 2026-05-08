@@ -49,12 +49,13 @@ Full Bubble Tea v2 TUI replacing the original `bufio.Scanner` REPL. Layout: bann
 AltScreen mode with `WindowSizeMsg`-based full redraw on text change to work around ultraviolet incremental renderer CJK wide-character ghosting bug.
 
 **Components:**
-- `App` — root `tea.Model`, dispatches key events, manages busy/idle state, completion state, attachment mode, queue, cancel function for interrupt
+- `App` — root `tea.Model`, dispatches key/mouse events, manages busy/idle state, completion state, attachment mode, queue, cancel function for interrupt, mouse selection state
 - `Transcript` — virtual scrolling with right-side scrollbar, renders 4 message kinds (User, Assistant, ToolCall, Event), banner, thinking fold
-- `Composer` — multi-line input with `[]rune` storage (correct multi-byte/Chinese support), attachments, multi-line cursor movement (Up/Down moves within text; history only at boundaries via `AtFirstLineStart`/`AtLastLineEnd`)
+- `Composer` — multi-line input with `[]rune` storage (correct multi-byte/Chinese support), attachments, multi-line cursor movement (Up/Down moves within text; history only at boundaries via `AtFirstLineStart`/`AtLastLineEnd`), Ctrl+V paste support
 - `StatusBar` — left-aligned `● model │ ctx │ agents │ bg │ cron │ time` with live token/cron/agent data
 - `ApprovalRequest` — tool approval popup (Y/N/A/Esc)
 - `CompletionEngine` — slash command matching with `/` prefix, scrolling dropdown (max 8 visible, auto-scrolls to keep selection in view), Tab/↑↓/Esc
+- `Selection` — mouse drag selection with inverse-video highlighting, right-click copy to clipboard, CJK-aware visual column calculation
 - `History` — persistent command history (`~/.gclaw/history`), search, dedup, saved on exit
 - `LogBuffer` — ring buffer with `slog.Handler` integration, `/logs [N]` command
 - `RenderMarkdown` — code blocks with border + syntax highlighting, tables, headings, bold, italic, inline code, links
@@ -63,7 +64,7 @@ AltScreen mode with `WindowSizeMsg`-based full redraw on text change to work aro
 
 **Themes:** `tokyo-night` (default), `catppuccin-mocha`, `light`, `terminal`. Configurable via `tui.theme` in config.yaml.
 
-**Key bindings:** Enter=send, Ctrl+Enter/Ctrl+J=newline, Esc=clear/close completions, Ctrl+C=interrupt (cancelFn + InterruptAndStop)/quit, Ctrl+L=clear transcript, ↑↓=move cursor within composer, history only at boundaries, PgUp/PgDn=scroll, Tab=apply completion, Ctrl+I=attach file.
+**Key bindings:** Enter=send, Ctrl+Enter/Ctrl+J=newline, Esc=clear/close completions/clear selection, Ctrl+C=interrupt (cancelFn + InterruptAndStop)/quit, Ctrl+L=clear transcript, ↑↓=move cursor within composer, history only at boundaries, PgUp/PgDn=scroll, Tab=apply completion, Ctrl+I=attach file, Ctrl+V=paste, Ctrl+O=toggle thinking/tool fold, mouse wheel=scroll, mouse drag=select text, right-click=copy selection to clipboard.
 
 **Queue:** Slash commands typed while agent is busy are queued and auto-executed when agent finishes. Queue preview shows above composer.
 

@@ -37,14 +37,25 @@ gclaw/
 │   ├── task/            # 后台任务管理
 │   ├── tool/            # 工具接口与注册表
 │   │   └── builtin/     # 内置工具（自注册）
-│   │       ├── shell/       # Bash (toolset: shell)
-│   │       ├── file_read/   # ReadFile (toolset: read)
-│   │       ├── file_write/  # WriteFile (toolset: write)
-│   │       ├── search/      # Glob + Grep (toolset: search)
-│   │       ├── timetool/    # SleepTool (toolset: time)
+│   │       ├── browser/     # 浏览器自动化 (navigate, snapshot, click, type, scroll, press, screenshot)
+│   │       ├── clarify/     # Clarify (向用户提问)
+│   │       ├── codeexec/    # CodeExecution (沙盒代码执行)
+│   │       ├── file/        # ReadFile + WriteFile + Patch
+│   │       ├── github_trending/ # GitHub 热点搜索
+│   │       ├── image/       # ImageGen (FAL.ai, OpenAI DALL-E)
+│   │       ├── mcp/         # MCP 客户端工具 (mcp_list_servers, mcp_discover, mcp_call)
+│   │       ├── memory/      # Memory (记忆读写)
 │   │       ├── meta/        # 元工具: delegate_task, cron_*, weixin_status, tasks_list
+│   │       ├── search/      # Glob + Grep (toolset: search)
+│   │       ├── session/     # SessionSearch (会话搜索)
+│   │       ├── shell/       # Bash (toolset: shell)
 │   │       ├── skill_tools/ # skill_create, skill_delete, skill_list
-│   │       └── github_trending/ # GitHub 热点搜索
+│   │       ├── timetool/    # SleepTool (toolset: time)
+│   │       ├── todo/        # Todo (任务管理)
+│   │       ├── tts/         # TTS (OpenAI 文字转语音)
+│   │       ├── video/       # Video (视频理解)
+│   │       ├── vision/      # Vision (图像理解)
+│   │       └── web/         # WebSearch + WebExtract (网页搜索和提取)
 │   └── remote/          # 远程桥接模式
 ├── pkg/
 │   └── proto/           # gRPC/Protobuf 定义
@@ -242,12 +253,19 @@ import (
 | 工具集 | 工具 | 用途 |
 |--------|------|------|
 | `shell` | Bash | 执行 Shell 命令（需审批） |
-| `read` | ReadFile | 读取文件内容 |
-| `write` | WriteFile | 创建/覆写文件（需审批） |
+| `file` | ReadFile, WriteFile, Patch | 文件读写和补丁 |
 | `search` | Glob, Grep | 文件搜索 |
 | `time` | SleepTool | 自主模式休眠（需 Sleeper） |
 | `meta` | delegate_task, cron_list, cron_run, weixin_status, tasks_list | 元工具 |
 | `skill` | skill_list, skill_create, skill_delete | Skill 管理 |
+| `web` | WebSearch, WebExtract | 网页搜索和提取 |
+| `browser` | browser_navigate, browser_snapshot, browser_click, browser_type, browser_scroll, browser_press, browser_screenshot | 浏览器自动化 |
+| `mcp` | mcp_list_servers, mcp_discover, mcp_call | MCP 服务器管理 |
+| `media` | Vision, ImageGen, TTS, Video, CodeExecution | 多媒体与代码执行 |
+| `memory` | Memory | 记忆读写 |
+| `session` | SessionSearch | 会话搜索 |
+| `todo` | Todo | 任务管理 |
+| `clarify` | Clarify | 向用户提问 |
 
 `Check()` 方法控制工具是否暴露：例如 SleepTool 仅在自主模式下有 Sleeper 时返回 true。
 
@@ -273,7 +291,7 @@ Skill 是可复用的程序性知识单元，以 YAML frontmatter + Markdown 格
         └── SKILL.md
 
 .gclaw/skills/             # 项目内置 skills（随代码分发，优先级最低）
-└── github-trending/
+└── my-project-skill/
     └── SKILL.md
 ```
 
@@ -556,3 +574,5 @@ Cron Agent 可配置独立模型（`cron.model`），不占用主对话的消息
 12. **多凭证轮转** — 同一 provider 多 API Key，round-robin + 429 自动冷却切换，单 Key 不创建池
 13. **中断注入** — 缓冲 channel 容量 8，非阻塞发送，drain-merge 合并多条中断为一则消息
 14. **LLM 智能压缩** — 辅助模型生成 8 段结构化摘要替代中间消息，失败自动降级截断，反震荡防浪费
+15. **Bubble Tea TUI** — AltScreen 全屏渲染，虚拟滚动 + 鼠标选择 + 反色高亮，CJK 宽字符精确处理
+16. **鼠标选择复制** — 拖拽选中文本（CJK-aware 列计算），右键复制到剪贴板，反色高亮反馈

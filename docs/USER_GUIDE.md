@@ -218,20 +218,81 @@ gclaw dev — interactive mode | deepseek-v4-pro | type /help
 > 搜索所有包含 "tool" 的 Go 文件
 ```
 
+#### TUI 键绑定
+
+| 按键 | 功能 |
+|------|------|
+| `Enter` | 发送消息 |
+| `Ctrl+Enter` / `Ctrl+J` | 换行 |
+| `Ctrl+C` | 中断 Agent / 退出 |
+| `Ctrl+L` | 清空对话 |
+| `Ctrl+V` | 粘贴文本 |
+| `Ctrl+I` | 附加文件 |
+| `Ctrl+O` | 展开/折叠思考过程和工具输出 |
+| `Esc` | 关闭补全菜单 / 清除选中文本 |
+| `↑` / `↓` | 在输入框中移动光标（在首行/末行边界触发历史浏览） |
+| `PgUp` / `PgDn` | 滚动对话记录 |
+| `Tab` | 应用补全建议 |
+| 鼠标拖拽 | 选中文本（反色高亮） |
+| 鼠标右键 | 复制选中文本到剪贴板 |
+| 鼠标滚轮 | 滚动对话记录 |
+
+#### 主题系统
+
+TUI 支持四种内置主题：
+
+| 主题 | 说明 |
+|------|------|
+| `tokyo-night` | 深色主题（默认） |
+| `catppuccin-mocha` | 暖色深色主题 |
+| `light` | 浅色主题 |
+| `terminal` | 终端原生配色 |
+
+配置方式：
+
+```yaml
+tui:
+  theme: tokyo-night    # 主题名称
+```
+
+#### 工具审批
+
+当 Agent 请求执行需要审批的操作（如写入文件、运行命令）时，TUI 会弹出审批提示：
+
+| 按键 | 动作 |
+|------|------|
+| `Y` | 允许本次 |
+| `N` | 拒绝本次 |
+| `A` | 本次会话内允许所有同类操作 |
+| `Esc` | 取消 |
+
 #### REPL 命令
 
 | 命令 | 功能 |
 |------|------|
 | `/help` | 显示帮助 |
+| `/version` | 查看版本 |
 | `/stats` | 查看上下文和 token 用量 |
-| `/autonomy` | 查看自主调度器状态 |
+| `/status` | 综合面板（模型、上下文、Agent、Cron 等全部状态） |
 | `/config` | 显示当前配置 |
+| `/model [name]` | 查看/切换当前模型 |
+| `/fallback [models...]` | 查看/设置回退模型列表 |
+| `/tools [all]` | 列出可用工具 |
+| `/autonomy` | 查看自主调度器状态 |
 | `/weixin` | 微信通道 login\|logout\|status |
 | `/cron` | 查看定时任务状态 |
 | `/tasks` | 列出后台任务 |
+| `/skills` | 列出已加载 skills |
+| `/memory [list\|clear]` | 查看记忆状态 |
+| `/sessions` | 查看会话列表 |
+| `/mcp` | 列出 MCP 服务器 |
 | `/compact` | 手动压缩上下文 |
 | `/interrupt <msg>` | 向运行中的 Agent 注入中断消息 |
 | `/clear` | 清空对话历史 |
+| `/logs [N]` | 查看最近 N 条日志（默认 20） |
+| `/curator status\|run\|pause\|resume\|restore <name>` | Skill 管家控制 |
+| `/doctor` | 诊断配置和连通性 |
+| `/backup` | 备份数据 |
 | `/exit` | 退出 |
 
 ### 半自主模式 (semi)
@@ -263,14 +324,26 @@ Agent 通过心跳驱动完全独立运行：
 
 | 工具 | 工具集 | 用途 | 需要审批 |
 |------|--------|------|---------|
-| ReadFile | read | 读取文件内容 | 否 |
-| WriteFile | write | 创建/覆写文件 | 是 |
+| ReadFile | file | 读取文件内容 | 否 |
+| WriteFile | file | 创建/覆写文件 | 是 |
+| Patch | file | 增量编辑文件 | 是 |
 | Bash | shell | 执行 Shell 命令 | 部分（安全命令自动通过） |
 | Glob | search | 文件名模式匹配 | 否 |
 | Grep | search | 正则搜索文件内容 | 否 |
+| WebSearch | web | 网页搜索 | 否 |
+| WebExtract | web | 提取网页内容为 Markdown | 否 |
+| Vision | media | 图像理解 | 否 |
+| ImageGen | media | AI 图像生成（FAL.ai / DALL-E） | 否 |
+| TTS | media | 文字转语音（OpenAI） | 否 |
+| Video | media | 视频理解分析 | 否 |
+| CodeExecution | media | 沙盒代码执行 | 否 |
+| Memory | memory | 记忆读写 | 否 |
+| SessionSearch | session | 搜索历史对话 | 否 |
+| Todo | todo | 任务管理 | 否 |
+| Clarify | clarify | 向用户提问 | 否 |
 | SleepTool | time | 自主模式休眠 | 否 |
 
-Bash 安全命令白名单：`git status`, `git diff`, `git log`, `ls`, `cat`, `echo`, `pwd`, `whoami`, `which`
+Bash 安全命令：工具描述动态报告当前活跃的 Shell 类型。安全命令（如 `git status`, `ls`, `cat` 等）根据权限规则自动通过。
 
 ### 元工具
 
@@ -281,6 +354,26 @@ Bash 安全命令白名单：`git status`, `git diff`, `git log`, `ls`, `cat`, `
 | `weixin_status` | 查看微信通道状态 |
 | `tasks_list` | 查看后台任务列表 |
 | `delegate_task` | 委派子代理执行任务 |
+
+### 浏览器工具
+
+| 工具 | 用途 |
+|------|------|
+| `browser_navigate` | 打开网页 |
+| `browser_snapshot` | 获取页面 DOM 快照 |
+| `browser_click` | 点击页面元素 |
+| `browser_type` | 在输入框中输入文本 |
+| `browser_scroll` | 滚动页面 |
+| `browser_press` | 按键操作 |
+| `browser_screenshot` | 截取页面截图 |
+
+### MCP 工具
+
+| 工具 | 用途 |
+|------|------|
+| `mcp_list_servers` | 列出已配置的 MCP 服务器 |
+| `mcp_discover` | 发现 MCP 服务器提供的工具 |
+| `mcp_call` | 调用 MCP 服务器上的工具 |
 
 ### Skill 工具
 
@@ -308,11 +401,11 @@ Skill 是可复用的程序性知识单元，以 SKILL.md 文件存储。
 
 ```
 .gclaw/skills/             # 项目内置 skills（随代码分发）
-└── github-trending/
+└── my-project-skill/
     └── SKILL.md
 
 ~/.gclaw/skills/           # 用户 skills 目录
-├── user/                  # 用户手写
+├── user/                  # 用户手写 + 内置 skills 副本
 │   └── my-skill/
 │       └── SKILL.md
 └── agent/                 # Agent 自创建
@@ -347,6 +440,39 @@ skills:
 ```
 
 项目 skills 随代码分发，放在 `.gclaw/skills/` 下，与 `config.yaml` 同级。如需覆盖项目 skill，在 `~/.gclaw/skills/user/` 下创建同名 skill 即可。
+
+### 内置 Skills
+
+GClaw 首次运行时会自动安装 5 个内置 skill 到 `~/.gclaw/skills/user/`（不会覆盖已有同名文件）：
+
+| Skill | 类别 | 说明 |
+|-------|------|------|
+| `plan` | 软件开发 | 结构化实现规划 |
+| `systematic-debugging` | 软件开发 | 系统化调试方法 |
+| `test-driven-development` | 软件开发 | 测试驱动开发流程 |
+| `architecture-diagram` | 创意 | 架构图生成 |
+| `kanban-orchestrator` | DevOps | 看板式任务编排 |
+
+### Skill 管家 (Curator)
+
+自动维护 Agent 创建的 skills，防止 skill 积累过多：
+
+- **自动降级**：超过 `stale_after_days`（默认 30 天）未使用的 skill 标记为 `[stale]`
+- **自动归档**：超过 `archive_after_days`（默认 90 天）的 skill 移入 `.archive/` 目录
+- **LLM 清理**：定期用子代理审查 agent skills，合并窄 skills 为综合 skills
+- **保护机制**：`pinned: true` 的 skill 永远不会被自动处理
+
+配置：
+```yaml
+curator:
+  enabled: true
+  interval_hours: 168      # LLM 审查间隔（默认 7 天）
+  min_idle_hours: 2        # 最小空闲时间
+  stale_after_days: 30
+  archive_after_days: 90
+```
+
+REPL 命令：`/curator status|run|pause|resume|restore <name>`
 
 ## 记忆系统
 
