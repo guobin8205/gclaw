@@ -54,14 +54,14 @@ type Styles struct {
 var Themes = map[string]Theme{
 	"tokyo-night": {
 		Name: "tokyo-night", BG: "#1a1b26",
-		Text: "#c0caf5", Accent: "#7aa2f7", Green: "#9ece6a",
+		Text: "#c0caf5", Accent: "#2ac3de", Green: "#9ece6a",
 		Orange: "#ff9e64", Purple: "#bb9af7", Yellow: "#e0af68",
 		Red: "#f7768e", Muted: "#565f89", Border: "#3b3d57",
 	},
 	"catppuccin-mocha": {
-		Name: "catppuccin-mocha", BG: "#1e1e2e",
-		Text: "#cdd6f4", Accent: "#89b4fa", Green: "#a6e3a1",
-		Orange: "#fab387", Purple: "#cba6f7", Yellow: "#f9e2af",
+		Name: "catppuccin-mocha", BG: "#11111b",
+		Text: "#cdd6f4", Accent: "#cba6f7", Green: "#a6e3a1",
+		Orange: "#fab387", Purple: "#f5c2e7", Yellow: "#f9e2af",
 		Red: "#f38ba8", Muted: "#6c7086", Border: "#313244",
 	},
 	"light": {
