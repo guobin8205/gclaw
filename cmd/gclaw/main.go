@@ -660,6 +660,7 @@ func runREPL() {
 	})
 		app.AppendWelcome("type /help for commands")
 	app.SetBanner(Version, cfg.Model.Default, cfg.Agent.Autonomy)
+	cmdContext.app = app
 		
 
 	p := tea.NewProgram(app)
@@ -698,6 +699,7 @@ type cmdCtx struct {
 	mcpMgr          *mcp.Manager
 	gw              *gateway.Gateway
 	logBuf          *tui.LogBuffer
+	app             *tui.App
 }
 
 func handleCommand(cmd string, c *cmdCtx, w io.Writer) {
@@ -720,6 +722,7 @@ Info:
   /model [name]      Show or switch active model
   /fallback          Show fallback model chain
   /tools [all]       List registered tools
+  /theme [name]      Show or switch TUI theme
 
 Subsystems:
   /skills            List loaded skills
@@ -850,6 +853,45 @@ Exit:
 		listTools(c, false, w)
 	case cmd == "/tools all":
 		listTools(c, true, w)
+
+	// ---- Theme ----
+	case cmd == "/theme":
+		cur := c.cfg.TUI.Theme
+		if cur == "" {
+			cur = "tokyo-night"
+		}
+		fmt.Fprintln(w, "\n--- Theme ---")
+		fmt.Fprintf(w, "Current: %s\n\n", cur)
+		fmt.Fprintln(w, "Available themes:")
+		for name := range tui.Themes {
+			marker := ""
+			if name == cur {
+				marker = " *"
+			}
+			fmt.Fprintf(w, "  %s%s\n", name, marker)
+		}
+		fmt.Fprintln(w, "\nUsage: /theme <name>")
+	case strings.HasPrefix(cmd, "/theme "):
+		name := strings.TrimSpace(strings.TrimPrefix(cmd, "/theme "))
+		if c.app == nil {
+			fmt.Fprintln(w, "Theme switching is only available in TUI mode")
+			break
+		}
+		if _, ok := tui.Themes[name]; !ok {
+			fmt.Fprintf(w, "Unknown theme: %s\nAvailable: ", name)
+			var names []string
+			for n := range tui.Themes {
+				names = append(names, n)
+			}
+			fmt.Fprintln(w, strings.Join(names, ", "))
+			break
+		}
+		if c.app.SetTheme(name) {
+			c.cfg.TUI.Theme = name
+			fmt.Fprintf(w, "Theme switched to %s\n", name)
+		} else {
+			fmt.Fprintf(w, "Failed to switch theme to %s\n", name)
+		}
 
 	// ---- Subsystems ----
 	case cmd == "/skills":

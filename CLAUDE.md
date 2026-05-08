@@ -204,15 +204,15 @@ Wired via `scheduler.SetOnIdleHook(fn)` — curator's `MaybeRun` is called on ea
 The REPL supports slash commands via `handleCommand` in `cmd/gclaw/main.go`. Commands receive a `cmdCtx` struct with all runtime dependencies (config, agent, providers, memory, skills, sessions, MCP, gateway, cron, etc.).
 
 **Session**: `/clear`, `/compact`, `/interrupt <msg>`
-**Info**: `/help`, `/version`, `/status`, `/stats`, `/config`, `/model [name]`, `/fallback [models...]`, `/tools [all]`
+**Info**: `/help`, `/version`, `/status`, `/stats`, `/config`, `/model [name]`, `/fallback [models...]`, `/tools [all]`, `/theme [name]`
 **Subsystems**: `/skills`, `/memory [list|clear]`, `/sessions`, `/mcp`, `/cron [run|pause|resume] <name>`, `/tasks`
 **Channels**: `/weixin login|logout|status`, `/gateway`
-**Diagnostics**: `/doctor`, `/debug`, `/dump`, `/backup`
+**Diagnostics**: `/doctor`, `/debug`, `/dump`, `/backup`, `/logs [N]`
 **Scheduling**: `/autonomy`
 **Curator**: `/curator status|run|pause|resume|restore <name>`
 **Exit**: `/exit`
 
-`/model <name>` calls `agent.SetModel(m)` to hot-swap the model at runtime. `/status` shows a comprehensive panel aggregating all subsystem states. `/doctor` checks config, model connectivity, and disk space.
+`/model <name>` calls `agent.SetModel(m)` to hot-swap the model at runtime. `/theme <name>` calls `app.SetTheme(name)` to hot-swap the TUI theme at runtime. `/status` shows a comprehensive panel aggregating all subsystem states. `/doctor` checks config, model connectivity, and disk space. `/logs [N]` shows the last N entries from the ring-buffer log (default 20).
 
 ### Checkpoint Manager (`internal/checkpoint/`)
 
