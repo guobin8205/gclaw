@@ -109,7 +109,7 @@ func (tr *Transcript) Render() string {
 	}
 	var allLines []string
 	if tr.banner != "" {
-		allLines = append(allLines, tr.styles.Accent.Render(tr.banner))
+		allLines = append(allLines, tr.styles.Banner.Render(tr.banner))
 		allLines = append(allLines, "")
 	}
 	for _, msg := range tr.msgs {

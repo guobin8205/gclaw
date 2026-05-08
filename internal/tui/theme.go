@@ -31,6 +31,7 @@ type Styles struct {
 	Muted       lipgloss.Style
 	Dim         lipgloss.Style
 	Accent      lipgloss.Style
+	Banner      lipgloss.Style
 	StatusBar   lipgloss.Style
 	Divider     lipgloss.Style
 	Completion  lipgloss.Style
@@ -118,6 +119,7 @@ func (th Theme) Styles() Styles {
 		Muted:       fg(th.Muted),
 		Dim:         fg(th.Dim),
 		Accent:      fg(th.Accent),
+		Banner:      fgbg(th.Accent, th.Dim),
 		StatusBar:   fg(th.Muted),
 		Divider:     fg(th.Border),
 		Completion:  fg(th.Text),
