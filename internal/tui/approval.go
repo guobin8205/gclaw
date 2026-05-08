@@ -2,8 +2,6 @@ package tui
 
 import (
 	"fmt"
-
-	"charm.land/lipgloss/v2"
 )
 
 type ApprovalResult int
@@ -40,21 +38,9 @@ func (a ApprovalRequest) Render(th Theme) string {
 	s := th.Styles()
 	warn := s.Warning.Render("⚠ Approval Required")
 	detail := s.BashPrefix.Render("$ ") + s.UserText.Render(a.Detail)
-	allowBtn := lipgloss.NewStyle().
-		Background(lipgloss.Color(th.Green)).
-		Foreground(lipgloss.Color(th.BG)).
-		Padding(0, 1).
-		Render("Y 允许")
-	denyBtn := lipgloss.NewStyle().
-		Background(lipgloss.Color(th.Red)).
-		Foreground(lipgloss.Color(th.BG)).
-		Padding(0, 1).
-		Render("N 拒绝")
-	alwaysBtn := lipgloss.NewStyle().
-		Background(lipgloss.Color(th.Border)).
-		Foreground(lipgloss.Color(th.Text)).
-		Padding(0, 1).
-		Render("A 总是允许")
+	allowBtn := s.AllowBtn.Render("Y 允许")
+	denyBtn := s.DenyBtn.Render("N 拒绝")
+	alwaysBtn := s.AlwaysBtn.Render("A 总是允许")
 	escBtn := s.Muted.Render("Esc 取消")
 	return fmt.Sprintf("%s\n%s\n%s %s %s %s", warn, detail, allowBtn, denyBtn, alwaysBtn, escBtn)
 }

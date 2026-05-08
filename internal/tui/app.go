@@ -399,7 +399,7 @@ func (a *App) View() tea.View {
 	if a.width == 0 {
 		return tea.NewView("Loading...")
 	}
-	divider := lipgloss.NewStyle().Foreground(lipgloss.Color(a.theme.Border)).Render(
+	divider := a.styles.Divider.Render(
 		strings.Repeat("─", a.width),
 	)
 	statusView := a.statusbar.Render(a.width)
@@ -476,8 +476,7 @@ func (a *App) View() tea.View {
 			qLines, cLines, hLines, qi,
 			bottomLines, transcriptHeight, transLines, joinedLines, clipped)
 	}
-		a.rawContent = joined
-a.rawContent = joined
+	a.rawContent = joined
 	a.rawLineCount = strings.Count(joined, "\n") + 1
 	if a.sel.HasSelection() {
 		start, end, ok := a.sel.Bounds()

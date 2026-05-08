@@ -36,6 +36,19 @@ type Styles struct {
 	Error       lipgloss.Style
 	Warning     lipgloss.Style
 	Prompt      lipgloss.Style
+	Background  lipgloss.Style
+	AllowBtn    lipgloss.Style
+	DenyBtn     lipgloss.Style
+	AlwaysBtn   lipgloss.Style
+	Heading1    lipgloss.Style
+	Heading2    lipgloss.Style
+	Heading     lipgloss.Style
+	Bold        lipgloss.Style
+	Italic      lipgloss.Style
+	Table       lipgloss.Style
+	CodeString  lipgloss.Style
+	CodeComment lipgloss.Style
+	CodeKeyword lipgloss.Style
 }
 
 var Themes = map[string]Theme{
@@ -105,5 +118,27 @@ func (th Theme) Styles() Styles {
 		Error:       fg(th.Red),
 		Warning:     fg(th.Yellow),
 		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color(th.Orange)).Bold(true),
+		Background:  fgbg(th.Text, th.BG),
+		AllowBtn: lipgloss.NewStyle().
+				Background(lipgloss.Color(th.Green)).
+				Foreground(lipgloss.Color(th.BG)).
+				Padding(0, 1),
+		DenyBtn: lipgloss.NewStyle().
+			Background(lipgloss.Color(th.Red)).
+			Foreground(lipgloss.Color(th.BG)).
+			Padding(0, 1),
+		AlwaysBtn: lipgloss.NewStyle().
+			Background(lipgloss.Color(th.Border)).
+			Foreground(lipgloss.Color(th.Text)).
+			Padding(0, 1),
+		Heading1:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Accent)),
+		Heading2:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Text)),
+		Heading:     lipgloss.NewStyle().Bold(true),
+		Bold:        lipgloss.NewStyle().Bold(true),
+		Italic:      lipgloss.NewStyle().Italic(true),
+		Table:       fg(th.Muted),
+		CodeString:  fg(th.Green),
+		CodeComment: fg(th.Muted),
+		CodeKeyword: fg(th.Purple),
 	}
 }

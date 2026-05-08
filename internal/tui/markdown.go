@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"charm.land/lipgloss/v2"
 )
 
 var (
@@ -24,7 +22,7 @@ var (
 )
 
 func RenderMarkdown(text string, th Theme) []string {
-	styles := th.Styles()
+	s := th.Styles()
 
 	// Extract and replace code blocks first
 	var codeBlocks []string
@@ -35,16 +33,16 @@ func RenderMarkdown(text string, th Theme) []string {
 		var block strings.Builder
 		// Language label with decorative border
 		if lang != "" {
-			block.WriteString(styles.Accent.Render(fmt.Sprintf("┌ %s ", lang)))
+			block.WriteString(s.Accent.Render(fmt.Sprintf("┌ %s ", lang)))
 			block.WriteString("\n")
 		}
 		for _, line := range strings.Split(code, "\n") {
-			highlighted := highlightCode(line, th)
-			block.WriteString(styles.Muted.Render("│ ") + highlighted)
+			highlighted := highlightCode(line, s)
+			block.WriteString(s.Muted.Render("│ ") + highlighted)
 			block.WriteString("\n")
 		}
 		if lang != "" {
-			block.WriteString(styles.Accent.Render("└"))
+			block.WriteString(s.Accent.Render("└"))
 			block.WriteString("\n")
 		}
 		idx := len(codeBlocks)
@@ -60,7 +58,7 @@ func RenderMarkdown(text string, th Theme) []string {
 		// Code block placeholder
 		if strings.HasPrefix(line, "\x00CODEBLOCK_") {
 			if inTable {
-				result = append(result, renderTable(tableRows, th)...)
+				result = append(result, renderTable(tableRows, s)...)
 				tableRows = nil
 				inTable = false
 			}
@@ -95,7 +93,7 @@ func RenderMarkdown(text string, th Theme) []string {
 
 		// Flush table if we exit table mode
 		if inTable {
-			result = append(result, renderTable(tableRows, th)...)
+			result = append(result, renderTable(tableRows, s)...)
 			tableRows = nil
 			inTable = false
 		}
@@ -103,14 +101,14 @@ func RenderMarkdown(text string, th Theme) []string {
 		// Heading
 		if m := reHeading.FindStringSubmatch(line); m != nil {
 			level := len(m[1])
-			headingText := applyInlineStyles(m[2], styles)
+			headingText := applyInlineStyles(m[2], s)
 			switch level {
 			case 1:
-				result = append(result, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Accent)).Render(headingText))
+				result = append(result, s.Heading1.Render(headingText))
 			case 2:
-				result = append(result, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Text)).Render(headingText))
+				result = append(result, s.Heading2.Render(headingText))
 			default:
-				result = append(result, lipgloss.NewStyle().Bold(true).Render(headingText))
+				result = append(result, s.Heading.Render(headingText))
 			}
 			continue
 		}
@@ -118,32 +116,32 @@ func RenderMarkdown(text string, th Theme) []string {
 		// Link
 		line = reLink.ReplaceAllStringFunc(line, func(match string) string {
 			parts := reLink.FindStringSubmatch(match)
-			return styles.Accent.Render(parts[1]) + styles.Muted.Render("("+parts[2]+")")
+			return s.Accent.Render(parts[1]) + s.Muted.Render("("+parts[2]+")")
 		})
 
-		styled := applyInlineStyles(line, styles)
+		styled := applyInlineStyles(line, s)
 		result = append(result, styled)
 	}
 
 	// Flush remaining table
 	if inTable {
-		result = append(result, renderTable(tableRows, th)...)
+		result = append(result, renderTable(tableRows, s)...)
 	}
 
 	return result
 }
 
-func highlightCode(line string, th Theme) string {
+func highlightCode(line string, s Styles) string {
 	// Simple keyword highlighting: keywords → accent color, strings → green, comments → muted
 	// Process in order: strings first (to avoid highlighting keywords inside strings)
 	result := reString.ReplaceAllStringFunc(line, func(match string) string {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(th.Green)).Render(match)
+		return s.CodeString.Render(match)
 	})
 	result = reComment.ReplaceAllStringFunc(result, func(match string) string {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(match)
+		return s.CodeComment.Render(match)
 	})
 	result = reKeyword.ReplaceAllStringFunc(result, func(match string) string {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(th.Purple)).Render(match)
+		return s.CodeKeyword.Render(match)
 	})
 	return result
 }
@@ -157,7 +155,7 @@ func parseTableRow(line string) []string {
 	return parts
 }
 
-func renderTable(rows [][]string, th Theme) []string {
+func renderTable(rows [][]string, s Styles) []string {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -194,7 +192,7 @@ func renderTable(rows [][]string, th Theme) []string {
 			}
 			cells = append(cells, cell+strings.Repeat(" ", pad))
 		}
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(
+		lines = append(lines, s.Table.Render(
 			"│ "+strings.Join(cells, " │ ")+" │",
 		))
 	}
@@ -229,7 +227,7 @@ func stripANSI(s string) string {
 func applyInlineStyles(text string, s Styles) string {
 	text = reBold.ReplaceAllStringFunc(text, func(match string) string {
 		inner := reBold.FindStringSubmatch(match)[1]
-		return lipgloss.NewStyle().Bold(true).Render(inner)
+		return s.Bold.Render(inner)
 	})
 	text = reInlineCode.ReplaceAllStringFunc(text, func(match string) string {
 		inner := reInlineCode.FindStringSubmatch(match)[1]
@@ -237,7 +235,7 @@ func applyInlineStyles(text string, s Styles) string {
 	})
 	text = reItalic.ReplaceAllStringFunc(text, func(match string) string {
 		inner := reItalic.FindStringSubmatch(match)[1]
-		return lipgloss.NewStyle().Italic(true).Render(inner)
+		return s.Italic.Render(inner)
 	})
 	return text
 }
