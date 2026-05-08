@@ -1,4 +1,4 @@
-package tui
+﻿package tui
 
 import (
 	"fmt"
@@ -33,7 +33,7 @@ func RenderMarkdown(text string, th Theme) []string {
 		var block strings.Builder
 		// Language label with decorative border
 		if lang != "" {
-			block.WriteString(s.Accent.Render(fmt.Sprintf("┌ %s ", lang)))
+			block.WriteString(s.Divider.Render(fmt.Sprintf("┌ %s ", lang)))
 			block.WriteString("\n")
 		}
 		for _, line := range strings.Split(code, "\n") {
@@ -42,7 +42,7 @@ func RenderMarkdown(text string, th Theme) []string {
 			block.WriteString("\n")
 		}
 		if lang != "" {
-			block.WriteString(s.Accent.Render("└"))
+			block.WriteString(s.Divider.Render("└"))
 			block.WriteString("\n")
 		}
 		idx := len(codeBlocks)

@@ -207,7 +207,7 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 		lines = append(lines,
 			tr.styles.Muted.Render("--- ")+
 				tr.styles.EventPrefix.Render(msg.EventIcon+" "+msg.EventSrc)+
-				tr.styles.Accent.Render("  "+msg.Content+" ---"),
+				tr.styles.UserText.Render("  "+msg.Content+" ---"),
 		)
 		lines = append(lines, "")
 	}

@@ -1,4 +1,4 @@
-package tui
+﻿package tui
 
 import (
 	"charm.land/lipgloss/v2"
@@ -107,7 +107,7 @@ func (th Theme) Styles() Styles {
 		ToolName:    fg(th.Green),
 		BashPrefix:  fg(th.Orange),
 		Delegate:    fg(th.Purple),
-		Skill:       fg(th.Yellow),
+		Skill:       fg(th.Purple),
 		EventPrefix: fg(th.Accent),
 		Muted:       fg(th.Muted),
 		Accent:      fg(th.Accent),
