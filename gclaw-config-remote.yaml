@@ -3,14 +3,14 @@ model:
   providers:
     deepseek:
       keys:
-        - sk-f259b4537625480dab3e8a013eba3d64
+        - ${DEEPSEEK_API_KEY}
       base_url: https://api.deepseek.com
       models:
         - deepseek-v4-flash
         - deepseek-v4-pro
     zhipu:
       keys:
-        - 804f7dca94d44b47a89435c11bfeb60e.lZVD7izzTDYCewOa
+        - ${ZHIPU_API_KEY}
       base_url: https://open.bigmodel.cn/api/paas/v4
       endpoint: /chat/completions
       models:
@@ -18,7 +18,7 @@ model:
         - glm-4-plus
     ark:
       keys:
-        - ark-c3f70e72-5ab9-40ec-a194-3bfbbc2e534e-b2f3d
+        - ${ARK_API_KEY}
       base_url: https://ark.cn-beijing.volces.com/api/v3
       models:
         - doubao-1.5-pro-32k
