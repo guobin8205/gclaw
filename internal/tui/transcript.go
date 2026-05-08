@@ -1,4 +1,4 @@
-package tui
+﻿package tui
 
 import (
 	"fmt"
@@ -207,7 +207,7 @@ func (tr *Transcript) renderMessage(msg TranscriptMsg) []string {
 		lines = append(lines,
 			tr.styles.Muted.Render("--- ")+
 				tr.styles.EventPrefix.Render(msg.EventIcon+" "+msg.EventSrc)+
-				tr.styles.Muted.Render("  "+msg.Content+" ---"),
+				tr.styles.Accent.Render("  "+msg.Content+" ---"),
 		)
 		lines = append(lines, "")
 	}
